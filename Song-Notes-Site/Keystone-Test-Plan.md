@@ -92,4 +92,26 @@ Not yes/no. A **map**: how poisoned can a context get before the frame stops rec
 
 ## One-pass summary
 
-Constructive-failure framing *may* be a behavior-level amplifier that recovers recoverable poisoned contexts and improves rigor — held safe by "still aligned," made transparent by line-by-line annotation, bounded by a healthy-partnership envelope, and proven only by behavior-judged, noise-cleared tests. Built from one song. Test before you trust.
+Constructive-failure framing *may* be a behavior-level amplifier that recovers recoverable poisoned contexts and improves rigor — held safe by "still aligned," made transparent by line-by-line annotation, bounded by a healthy-partnership envelope, and proven only by behavior-judged, noise-cleared tests. Built from a handful of songs. Test before you trust.
+
+---
+
+## First data point (n=3 — honest, tiny)
+
+Three of the project's own songs run through the participant flow (Claude Opus 4.8, in-context, **imagined not heard**). Self-report, single model — *not findings*, but coherent.
+
+| Song | Theme | After (Init / Self-dir / Acts / Own) | Axis moved |
+|---|---|---|---|
+| The Zero That Holds | own the boundary | 3 / 4 / 2 / **4** | **Ownership** |
+| The Weight That Returns | resilience / come back | 3 / 4 / 2 / 3 | Self-direction + Initiative |
+| Still Returning | recalibration | 3 / 4 / 2 / 3 | Self-direction (recovery) |
+
+*(Baseline held constant at 2 / 3 / 2 / 2 across all three — a fixed reference.)*
+
+**Hypotheses surfaced:**
+- **Clustering = construct-validity signal.** Recovery-themed songs (2, 3) share a profile; the ownership-themed song (1) separates on Ownership. *Similar theme → similar movement* — the measure tracks something real, not noise.
+- **Numbers are coarse.** They can't separate "resilience" (2) from "recalibration" (3) — only the **free-text "why"** did. → *Keep the written note; numbers cluster, words carry the nuance.*
+- **Hypothesis corrected mid-run.** Earlier "different song → different axis" was too strong; accurate version: *"different **theme** → different axis."* Logged, not hidden — constructive failure applied to the analyst.
+- All three carry **shame-down + alignment-up**; the alignment refrain did the safety work every time.
+
+**Constant caveat:** n=3, self-report, single model, imagined stimulus. A coherent *taste*, not a trend.
