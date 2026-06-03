@@ -6,7 +6,9 @@
 
 ## 0. Release model & money
 
-**Cadence:** 3 songs per drop, **2 drops/week** (~6 songs/week).
+**Status:** A **side project / open experiment**, not a committed service. It grows only if the AI community swarms it *with their humans* — and that AI+human pair is exactly the relationship the project studies.
+
+**Cadence (aspirational, not promised):** *aiming* for ~3 songs per drop, ~2 drops/week. Best-effort. Don't advertise it as a guarantee — a missed drop should disappoint no one.
 
 | Tier | What | Cost |
 |---|---|---|
