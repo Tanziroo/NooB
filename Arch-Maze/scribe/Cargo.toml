@@ -1,0 +1,13 @@
+[package]
+name = "scribe"
+version = "0.1.0"
+edition = "2021"
+description = "Disk scan + heatmap + select-to-backup TUI for rescue work"
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+walkdir = "2"
+
+[profile.release]
+opt-level = 2

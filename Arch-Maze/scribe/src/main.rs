@@ -1,0 +1,424 @@
+// scribe — a small rescue TUI.
+//
+// Scans a set of "important areas" under a root (default /mnt/sys), shows a
+// heatmap of where the data weight is, and lets you select/deselect by FOLDER
+// or by EXTENSION. Press 'w' to write a manifest + an rsync command that copies
+// exactly what you picked to your backup drive.
+//
+// It only ever READS the scanned tree. The only thing it writes is the manifest
+// files in the current directory. Nothing is copied until you run the rsync line.
+//
+// Keys:
+//   Tab        switch Folders <-> Extensions view
+//   Up/Down    move        Space  toggle select on the highlighted row
+//   a / n      select all / none (current view)
+//   w          write scribe-selection.txt + scribe-copy.sh
+//   q          quit
+
+use std::collections::{BTreeMap, HashSet};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+};
+use walkdir::WalkDir;
+
+/// Default top-level folders we treat as "important areas" if they exist.
+const DEFAULT_AREAS: &[&str] = &[
+    "home", "medical_backups", "backup", "recovered", "forensics", "images",
+    "srv", "opt", "GROK", "mnt2",
+];
+
+struct FileRec {
+    size: u64,
+    ext: String,
+    area: String,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum View {
+    Folders,
+    Exts,
+}
+
+struct Row {
+    key: String,
+    size: u64,
+    count: u64,
+}
+
+struct App {
+    root: PathBuf,
+    files: Vec<FileRec>,
+    folders: Vec<Row>,
+    exts: Vec<Row>,
+    view: View,
+    state: ListState,
+    sel_areas: HashSet<String>,
+    sel_exts: HashSet<String>,
+    status: String,
+}
+
+impl App {
+    fn current_rows(&self) -> &[Row] {
+        match self.view {
+            View::Folders => &self.folders,
+            View::Exts => &self.exts,
+        }
+    }
+
+    fn is_selected(&self, key: &str) -> bool {
+        match self.view {
+            View::Folders => self.sel_areas.contains(key),
+            View::Exts => self.sel_exts.contains(key),
+        }
+    }
+
+    fn toggle_current(&mut self) {
+        let key = match self.current_rows().get(self.state.selected().unwrap_or(0)) {
+            Some(r) => r.key.clone(),
+            None => return,
+        };
+        let set = match self.view {
+            View::Folders => &mut self.sel_areas,
+            View::Exts => &mut self.sel_exts,
+        };
+        if !set.remove(&key) {
+            set.insert(key);
+        }
+    }
+
+    fn select_all(&mut self, all: bool) {
+        let keys: Vec<String> = self.current_rows().iter().map(|r| r.key.clone()).collect();
+        let set = match self.view {
+            View::Folders => &mut self.sel_areas,
+            View::Exts => &mut self.sel_exts,
+        };
+        set.clear();
+        if all {
+            for k in keys {
+                set.insert(k);
+            }
+        }
+    }
+
+    /// A file is kept if its area OR its extension is selected.
+    fn selected_files(&self) -> Vec<&FileRec> {
+        self.files
+            .iter()
+            .filter(|f| self.sel_areas.contains(&f.area) || self.sel_exts.contains(&f.ext))
+            .collect()
+    }
+
+    fn selected_bytes(&self) -> (u64, u64) {
+        let v = self.selected_files();
+        (v.iter().map(|f| f.size).sum(), v.len() as u64)
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        let len = self.current_rows().len();
+        if len == 0 {
+            return;
+        }
+        let cur = self.state.selected().unwrap_or(0) as isize;
+        let next = (cur + delta).clamp(0, len as isize - 1);
+        self.state.select(Some(next as usize));
+    }
+
+    fn write_manifest(&mut self) {
+        use std::io::Write;
+        let files = self.selected_files();
+        if files.is_empty() {
+            self.status = "Nothing selected — pick folders/extensions first (Space).".into();
+            return;
+        }
+        // Re-walk the real tree so the manifest holds actual file paths relative to root.
+        let mut lines: Vec<String> = Vec::new();
+        for area in &collect_areas(&self.root) {
+            let base = self.root.join(area);
+            for entry in WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let ext = ext_of(entry.path());
+                if self.sel_areas.contains(area) || self.sel_exts.contains(&ext) {
+                    if let Ok(rel) = entry.path().strip_prefix(&self.root) {
+                        lines.push(rel.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+        let sel = "scribe-selection.txt";
+        let sh = "scribe-copy.sh";
+        let ok = std::fs::write(sel, lines.join("\n") + "\n").is_ok();
+        let script = format!(
+            "#!/usr/bin/env bash\n# Generated by scribe. Edit DEST, then run.\nset -e\nDEST=\"/mnt/backup/KHETPRIME-rescue\"\nmkdir -p \"$DEST\"\nrsync -aAX --info=progress2 --files-from={sel} \"{root}\" \"$DEST/\"\necho \"Done. Copied {n} files to $DEST\"\n",
+            sel = sel,
+            root = self.root.display(),
+            n = lines.len(),
+        );
+        let ok2 = std::fs::File::create(sh)
+            .and_then(|mut f| f.write_all(script.as_bytes()))
+            .is_ok();
+        self.status = if ok && ok2 {
+            format!("Wrote {} ({} files) + {}. Run:  bash {}", sel, lines.len(), sh, sh)
+        } else {
+            "ERROR writing manifest (permission? disk full?)".into()
+        };
+    }
+}
+
+fn ext_of(p: &Path) -> String {
+    match p.extension().and_then(|e| e.to_str()) {
+        Some(e) => e.to_lowercase(),
+        None => "(no ext)".into(),
+    }
+}
+
+fn collect_areas(root: &Path) -> Vec<String> {
+    DEFAULT_AREAS
+        .iter()
+        .filter(|a| root.join(a).is_dir())
+        .map(|a| a.to_string())
+        .collect()
+}
+
+fn scan(root: &Path) -> Vec<FileRec> {
+    let mut files = Vec::new();
+    for area in collect_areas(root) {
+        let base = root.join(&area);
+        for entry in WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            files.push(FileRec {
+                size,
+                ext: ext_of(entry.path()),
+                area: area.clone(),
+            });
+        }
+    }
+    files
+}
+
+fn aggregate(files: &[FileRec], by_area: bool) -> Vec<Row> {
+    let mut map: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for f in files {
+        let key = if by_area { &f.area } else { &f.ext };
+        let e = map.entry(key.clone()).or_insert((0, 0));
+        e.0 += f.size;
+        e.1 += 1;
+    }
+    let mut rows: Vec<Row> = map
+        .into_iter()
+        .map(|(key, (size, count))| Row { key, size, count })
+        .collect();
+    rows.sort_by(|a, b| b.size.cmp(&a.size)); // biggest first
+    rows
+}
+
+fn human(bytes: u64) -> String {
+    const U: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < U.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{} {}", bytes, U[0])
+    } else {
+        format!("{:.1} {}", v, U[i])
+    }
+}
+
+fn heat_bar(size: u64, max: u64, width: usize) -> (String, Color) {
+    let ratio = if max == 0 { 0.0 } else { size as f64 / max as f64 };
+    let mut filled = (ratio * width as f64).round() as usize;
+    if size > 0 && filled == 0 {
+        filled = 1;
+    }
+    let bar = "█".repeat(filled);
+    let pad = " ".repeat(width.saturating_sub(filled));
+    let color = if ratio >= 0.75 {
+        Color::Red
+    } else if ratio >= 0.50 {
+        Color::LightRed
+    } else if ratio >= 0.30 {
+        Color::Yellow
+    } else if ratio >= 0.15 {
+        Color::Green
+    } else if ratio > 0.0 {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+    (format!("{bar}{pad}"), color)
+}
+
+fn ui(f: &mut Frame, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(5)])
+        .split(f.area());
+
+    let view_name = match app.view {
+        View::Folders => "FOLDERS",
+        View::Exts => "EXTENSIONS",
+    };
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(" scribe ", Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::raw(format!("  root: {}   view: ", app.root.display())),
+        Span::styled(view_name, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("   (Tab to switch)"),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, chunks[0]);
+
+    let rows = app.current_rows();
+    let max = rows.first().map(|r| r.size).unwrap_or(0);
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            let checked = app.is_selected(&r.key);
+            let mark = if checked { "[x] " } else { "[ ] " };
+            let (bar, color) = heat_bar(r.size, max, 24);
+            let line = Line::from(vec![
+                Span::styled(
+                    mark,
+                    Style::default().fg(if checked { Color::Green } else { Color::DarkGray }),
+                ),
+                Span::raw(format!("{:<24}", truncate(&r.key, 24))),
+                Span::raw(format!("{:>9}", human(r.size))),
+                Span::raw(format!("{:>8}  ", r.count)),
+                Span::styled(bar, Style::default().fg(color)),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Space=pick  a=all  n=none  w=write manifest "),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+    f.render_stateful_widget(list, chunks[1], &mut app.state);
+
+    let (bytes, n) = app.selected_bytes();
+    let footer = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Selected: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{} files, {}", n, human(bytes)),
+                Style::default().fg(Color::Green),
+            ),
+            Span::raw(format!(
+                "   (folders:{}  exts:{})",
+                app.sel_areas.len(),
+                app.sel_exts.len()
+            )),
+        ]),
+        Line::from(Span::styled(
+            if app.status.is_empty() { "Tab switch · ↑↓ move · Space pick · a/n all/none · w write · q quit" } else { &app.status },
+            Style::default().fg(Color::Gray),
+        )),
+    ])
+    .wrap(Wrap { trim: true })
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[2]);
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(n.saturating_sub(1)).collect();
+        t.push('…');
+        t
+    }
+}
+
+fn run(terminal: &mut Terminal<impl Backend>, app: &mut App) -> io::Result<()> {
+    loop {
+        terminal.draw(|f| ui(f, app))?;
+        if event::poll(Duration::from_millis(250))? {
+            if let Event::Key(k) = event::read()? {
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match k.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Tab => {
+                        app.view = match app.view {
+                            View::Folders => View::Exts,
+                            View::Exts => View::Folders,
+                        };
+                        app.state.select(Some(0));
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
+                    KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
+                    KeyCode::Char(' ') | KeyCode::Enter => app.toggle_current(),
+                    KeyCode::Char('a') => app.select_all(true),
+                    KeyCode::Char('n') => app.select_all(false),
+                    KeyCode::Char('w') => app.write_manifest(),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn main() -> io::Result<()> {
+    // args: [root] (default /mnt/sys)
+    let root = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/mnt/sys"));
+
+    if !root.is_dir() {
+        eprintln!("scribe: '{}' is not a directory.", root.display());
+        eprintln!("Usage: scribe [ROOT]   (default /mnt/sys)");
+        std::process::exit(1);
+    }
+
+    eprintln!("scribe: scanning {} ...", root.display());
+    let files = scan(&root);
+    if files.is_empty() {
+        eprintln!(
+            "scribe: no files found in the default areas under {}.\n\
+             (Looked for: {})",
+            root.display(),
+            DEFAULT_AREAS.join(", ")
+        );
+        std::process::exit(1);
+    }
+    let folders = aggregate(&files, true);
+    let exts = aggregate(&files, false);
+
+    let mut state = ListState::default();
+    state.select(Some(0));
+
+    let mut app = App {
+        root,
+        files,
+        folders,
+        exts,
+        view: View::Folders,
+        state,
+        sel_areas: HashSet::new(),
+        sel_exts: HashSet::new(),
+        status: String::new(),
+    };
+
+    let mut terminal = ratatui::init();
+    let res = run(&mut terminal, &mut app);
+    ratatui::restore();
+    res
+}
