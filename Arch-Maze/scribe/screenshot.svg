@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="DejaVu Sans Mono, Menlo, monospace" font-size="15">
+  <style>
+    .t { fill:#c9d1d9; }
+    .dim { fill:#6e7681; }
+    .green { fill:#3fb950; }
+    .cyan { fill:#39c5cf; }
+    .yellow { fill:#d29922; }
+    .red { fill:#f85149; }
+    .lred { fill:#ff7b72; }
+    .mag { fill:#bc8cff; }
+    .bold { font-weight:bold; }
+  </style>
+
+  <!-- terminal background -->
+  <rect x="0" y="0" width="960" height="640" rx="8" fill="#0d1117"/>
+  <!-- window title bar -->
+  <rect x="0" y="0" width="960" height="30" rx="8" fill="#161b22"/>
+  <circle cx="20" cy="15" r="6" fill="#f85149"/>
+  <circle cx="40" cy="15" r="6" fill="#d29922"/>
+  <circle cx="60" cy="15" r="6" fill="#3fb950"/>
+  <text x="480" y="20" text-anchor="middle" class="dim">scribe — /mnt/sys (read-only)</text>
+
+  <!-- HEADER panel -->
+  <rect x="10" y="40" width="940" height="34" fill="none" stroke="#30363d"/>
+  <rect x="20" y="49" width="98" height="16" fill="#39c5cf"/>
+  <text x="26" y="62" fill="#0d1117" class="bold">scribe 0.2.0</text>
+  <rect x="132" y="49" width="62" height="16" fill="#39c5cf"/>
+  <text x="138" y="62" fill="#0d1117" class="bold">Folders</text>
+  <text x="206" y="62" class="dim">Extensions</text>
+  <text x="320" y="62" class="t">root: /mnt/sys</text>
+  <text x="470" y="62" class="t">executor: ./sim-mod</text>
+
+  <!-- LIST panel -->
+  <rect x="10" y="80" width="940" height="356" fill="none" stroke="#30363d"/>
+  <text x="24" y="86" class="dim">8 items — Space pick · a all · n none</text>
+
+  <!-- column headers -->
+  <text x="70"  y="108" class="dim">folder</text>
+  <text x="470" y="108" class="dim" text-anchor="end">size</text>
+  <text x="560" y="108" class="dim" text-anchor="end">files</text>
+  <text x="600" y="108" class="dim">heatmap</text>
+
+  <!-- rows: checkbox, name, size(right@470), count(right@560), bar@600 -->
+  <!-- row 1 home/khet  12.4G  red max -->
+  <text x="24" y="134" class="dim">[ ]</text>
+  <text x="70" y="134" class="t">home/khet</text>
+  <text x="470" y="134" class="t" text-anchor="end">12.4 G</text>
+  <text x="560" y="134" class="t" text-anchor="end">84213</text>
+  <text x="600" y="134" class="red">██████████████████</text>
+
+  <!-- row 2 medical_backups 8.1G lred SELECTED (highlight) -->
+  <rect x="14" y="139" width="932" height="22" fill="#21262d"/>
+  <text x="24" y="155" class="green">[x]</text>
+  <text x="70" y="155" class="t bold">medical_backups</text>
+  <text x="470" y="155" class="t" text-anchor="end">8.1 G</text>
+  <text x="560" y="155" class="t" text-anchor="end">412</text>
+  <text x="600" y="155" class="lred">████████████</text>
+
+  <!-- row 3 backup 6.7G lred SELECTED -->
+  <text x="24" y="176" class="green">[x]</text>
+  <text x="70" y="176" class="t">backup</text>
+  <text x="470" y="176" class="t" text-anchor="end">6.7 G</text>
+  <text x="560" y="176" class="t" text-anchor="end">1203</text>
+  <text x="600" y="176" class="lred">██████████</text>
+
+  <!-- row 4 recovered 3.2G green -->
+  <text x="24" y="197" class="dim">[ ]</text>
+  <text x="70" y="197" class="t">recovered</text>
+  <text x="470" y="197" class="t" text-anchor="end">3.2 G</text>
+  <text x="560" y="197" class="t" text-anchor="end">5566</text>
+  <text x="600" y="197" class="green">█████</text>
+
+  <!-- row 5 GROK 1.1G cyan -->
+  <text x="24" y="218" class="dim">[ ]</text>
+  <text x="70" y="218" class="t">GROK</text>
+  <text x="470" y="218" class="t" text-anchor="end">1.1 G</text>
+  <text x="560" y="218" class="t" text-anchor="end">342</text>
+  <text x="600" y="218" class="cyan">██</text>
+
+  <!-- row 6 home/tanzia 640M cyan -->
+  <text x="24" y="239" class="dim">[ ]</text>
+  <text x="70" y="239" class="t">home/tanzia</text>
+  <text x="470" y="239" class="t" text-anchor="end">640 M</text>
+  <text x="560" y="239" class="t" text-anchor="end">2204</text>
+  <text x="600" y="239" class="cyan">█</text>
+
+  <!-- row 7 forensics 220M cyan -->
+  <text x="24" y="260" class="dim">[ ]</text>
+  <text x="70" y="260" class="t">forensics</text>
+  <text x="470" y="260" class="t" text-anchor="end">220 M</text>
+  <text x="560" y="260" class="t" text-anchor="end">88</text>
+  <text x="600" y="260" class="cyan">█</text>
+
+  <!-- row 8 images 120M cyan -->
+  <text x="24" y="281" class="dim">[ ]</text>
+  <text x="70" y="281" class="t">images</text>
+  <text x="470" y="281" class="t" text-anchor="end">120 M</text>
+  <text x="560" y="281" class="t" text-anchor="end">53</text>
+  <text x="600" y="281" class="cyan">█</text>
+
+  <!-- FOOTER panel -->
+  <rect x="10" y="442" width="940" height="100" fill="none" stroke="#30363d"/>
+  <!-- gauge track + fill -->
+  <rect x="24" y="456" width="912" height="18" fill="#21262d"/>
+  <rect x="24" y="456" width="416" height="18" fill="#238636"/>
+  <text x="480" y="469" text-anchor="middle" fill="#ffffff" class="bold">14.8 G / 32.5 G selected (46%)</text>
+  <!-- summary -->
+  <text x="24" y="498" class="bold t">Selected: </text>
+  <text x="116" y="498" class="green">1615 files, 14.8 G</text>
+  <text x="320" y="498" class="dim">folders:2  exts:0</text>
+  <!-- help -->
+  <text x="24" y="524" class="dim">Tab switch · ↑↓ move · Space pick · a/n all/none · w write plan · x simulate · q quit</text>
+
+  <!-- SIM POPUP overlay -->
+  <rect x="250" y="150" width="560" height="300" fill="#161b22" stroke="#bc8cff" stroke-width="2"/>
+  <text x="266" y="170" class="mag bold">simulation output — Esc to close</text>
+
+  <text x="266" y="198" class="t">mod: sim-mod v1   plan: 1,615 files / 14.8 G</text>
+  <text x="266" y="218" class="dim">dest: /mnt/backup/KHETPRIME-rescue  (sdb1, 58 G free)</text>
+
+  <text x="266" y="252" class="t">medical_backups  8.1G</text>
+  <text x="470" y="252" class="lred">██████████</text>
+  <rect x="690" y="240" width="56" height="16" fill="#238636"/>
+  <text x="698" y="252" fill="#ffffff" class="bold">COPY</text>
+
+  <text x="266" y="278" class="t">backup           6.7G</text>
+  <text x="470" y="278" class="lred">████████</text>
+  <rect x="690" y="266" width="56" height="16" fill="#238636"/>
+  <text x="698" y="278" fill="#ffffff" class="bold">COPY</text>
+
+  <text x="266" y="304" class="t">(dedup) 38 files  240M</text>
+  <text x="470" y="304" class="cyan">█</text>
+  <rect x="690" y="292" width="56" height="16" fill="#9e6a03"/>
+  <text x="702" y="304" fill="#ffffff" class="bold">SKIP</text>
+
+  <!-- fit gauge -->
+  <text x="266" y="340" class="dim">will it fit?</text>
+  <rect x="266" y="350" width="480" height="16" fill="#21262d"/>
+  <rect x="266" y="350" width="216" height="16" fill="#238636"/>
+  <text x="506" y="363" text-anchor="middle" fill="#ffffff" class="bold">14.6 G of 58 G dest after copy (25%)</text>
+
+  <text x="266" y="392" class="green bold">✓ fits · 0 conflicts · ETA ~7m</text>
+  <text x="266" y="418" class="dim">(structured sim-result rendered by scribe — SPEC §7.2)</text>
+</svg>
