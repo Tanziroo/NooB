@@ -206,7 +206,8 @@ on stdout, which scribe renders as a colored panel:
 
 - [x] v0.1 — scan, heatmap, select by folder/ext, manifest + rsync.
 - [x] v0.2 — folder drill-down, selection gauge, JSON plan, executor sim hook.
-- [ ] v0.3 — structured sim-result rendering (§7.2): projected bars, action
-      badges, fit gauge.
+- [x] v0.3 — structured sim-result rendering (§7.2): projected bars, action
+      badges, fit gauge. Example mod: `examples/sim-mod.sh`. Falls back to raw
+      text if the executor returns non-sim output.
 - [ ] v0.3 — subfolder expand/collapse in the list; per-row include/exclude.
 - [ ] v0.4 — scan progress bar for very large trees; saved selection profiles.

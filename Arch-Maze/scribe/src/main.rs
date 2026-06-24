@@ -40,7 +40,7 @@ use ratatui::{
 };
 use walkdir::WalkDir;
 
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "0.3.0";
 const DEFAULT_AREAS: &[&str] = &[
     "home", "medical_backups", "backup", "recovered", "forensics", "images",
     "srv", "opt", "GROK", "mnt2",
@@ -65,6 +65,85 @@ struct Row {
     count: u64,
 }
 
+struct SimRow {
+    key: String,
+    bytes: u64,
+    action: String,
+}
+
+/// Structured result an executor may return on stdout (SPEC §7.2).
+struct SimResult {
+    dest: String,
+    dest_free: u64,
+    fits: bool,
+    eta_seconds: u64,
+    copy_bytes: u64,
+    skip_bytes: u64,
+    conflicts: u64,
+    rows: Vec<SimRow>,
+}
+
+enum Popup {
+    Text(String),
+    Sim(SimResult),
+}
+
+/// Parse an executor's stdout as a sim-result. Returns None if it isn't valid
+/// sim JSON, so the caller can fall back to showing the raw text.
+fn parse_sim(out: &str) -> Option<SimResult> {
+    let v: serde_json::Value = serde_json::from_str(out.trim()).ok()?;
+    // Require the v0.3 shape: must have a "rows" array to count as a sim-result.
+    let rows_v = v.get("rows")?.as_array()?;
+    let u64f = |val: &serde_json::Value, k: &str| -> u64 {
+        val.get(k).and_then(|x| x.as_u64()).unwrap_or(0)
+    };
+    let totals = v.get("totals").cloned().unwrap_or(serde_json::Value::Null);
+    let rows = rows_v
+        .iter()
+        .map(|r| SimRow {
+            key: r.get("key").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
+            bytes: u64f(r, "bytes"),
+            action: r
+                .get("action")
+                .and_then(|x| x.as_str())
+                .unwrap_or("COPY")
+                .to_uppercase(),
+        })
+        .collect();
+    Some(SimResult {
+        dest: v.get("dest").and_then(|x| x.as_str()).unwrap_or("(dest?)").to_string(),
+        dest_free: u64f(&v, "dest_free_bytes"),
+        fits: v.get("fits").and_then(|x| x.as_bool()).unwrap_or(true),
+        eta_seconds: u64f(&v, "eta_seconds"),
+        copy_bytes: u64f(&totals, "copy_bytes"),
+        skip_bytes: u64f(&totals, "skip_bytes"),
+        conflicts: u64f(&totals, "conflicts"),
+        rows,
+    })
+}
+
+fn action_color(action: &str) -> Color {
+    match action {
+        "COPY" => Color::Green,
+        "SKIP" => Color::Yellow,
+        "CONFLICT" => Color::Red,
+        "DEDUP" => Color::Cyan,
+        _ => Color::Gray,
+    }
+}
+
+fn fmt_eta(secs: u64) -> String {
+    if secs == 0 {
+        "—".into()
+    } else if secs < 90 {
+        format!("~{secs}s")
+    } else if secs < 5400 {
+        format!("~{}m", (secs + 30) / 60)
+    } else {
+        format!("~{:.1}h", secs as f64 / 3600.0)
+    }
+}
+
 struct Config {
     root: PathBuf,
     areas: Vec<String>,
@@ -83,7 +162,7 @@ struct App {
     sel_folders: HashSet<String>,
     sel_exts: HashSet<String>,
     status: String,
-    popup: Option<String>,
+    popup: Option<Popup>,
 }
 
 impl App {
@@ -223,7 +302,12 @@ impl App {
             return;
         }
         let plan = self.build_plan_json();
-        self.popup = Some(run_executor(&prog, &plan));
+        let out = run_executor(&prog, &plan);
+        // Render a structured sim if the mod returned one; else show raw text.
+        self.popup = Some(match parse_sim(&out) {
+            Some(sim) => Popup::Sim(sim),
+            None => Popup::Text(out),
+        });
     }
 }
 
@@ -495,19 +579,94 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(status, foot[2]);
 
     // ---- popup (simulation output) ----
-    if let Some(text) = &app.popup {
-        let area = centered(70, 70, f.area());
+    if let Some(popup) = &app.popup {
+        let area = centered(72, 74, f.area());
         f.render_widget(Clear, area);
-        let p = Paragraph::new(text.clone())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" simulation output — Esc to close ")
-                    .border_style(Style::default().fg(Color::Magenta)),
-            )
-            .wrap(Wrap { trim: false });
-        f.render_widget(p, area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" simulation output — Esc to close ")
+            .border_style(Style::default().fg(Color::Magenta));
+        match popup {
+            Popup::Text(text) => {
+                let p = Paragraph::new(text.clone()).block(block).wrap(Wrap { trim: false });
+                f.render_widget(p, area);
+            }
+            Popup::Sim(sim) => render_sim(f, area, block, sim),
+        }
     }
+}
+
+/// Render a structured sim-result: header, per-row projected bars + action
+/// badges, and a "will it fit?" gauge (SPEC §7.2).
+fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("dest: ", Style::default().fg(Color::Gray)),
+        Span::raw(sim.dest.clone()),
+        Span::styled(format!("  ({} free)", human(sim.dest_free)), Style::default().fg(Color::Gray)),
+    ]));
+    let conflict_style = if sim.conflicts > 0 {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(format!("copy {}", human(sim.copy_bytes)), Style::default().fg(Color::Green)),
+        Span::raw(" · "),
+        Span::styled(format!("skip {}", human(sim.skip_bytes)), Style::default().fg(Color::Yellow)),
+        Span::raw(" · "),
+        Span::styled(format!("{} conflicts", sim.conflicts), conflict_style),
+        Span::raw(" · "),
+        Span::styled(format!("ETA {}", fmt_eta(sim.eta_seconds)), Style::default().fg(Color::Gray)),
+    ]));
+    lines.push(Line::from(""));
+
+    let max = sim.rows.iter().map(|r| r.bytes).max().unwrap_or(0);
+    for r in &sim.rows {
+        let (bar, color) = heat_bar(r.bytes, max, 16);
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<18}", truncate(&r.key, 18))),
+            Span::raw(format!("{:>8}  ", human(r.bytes))),
+            Span::styled(bar, Style::default().fg(color)),
+            Span::raw("  "),
+            Span::styled(
+                format!(" {} ", r.action),
+                Style::default().fg(Color::Black).bg(action_color(&r.action)).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("will it fit?", Style::default().fg(Color::Gray))));
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(lines.len() as u16), Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), layout[0]);
+
+    // Fit gauge: how full the destination is after the copy lands.
+    let after = sim.copy_bytes;
+    let denom = sim.dest_free.max(1);
+    let ratio = (after as f64 / denom as f64).clamp(0.0, 1.0);
+    let gcolor = if sim.fits { Color::Green } else { Color::Red };
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(gcolor))
+        .ratio(ratio)
+        .label(format!("{} of {} dest ({:.0}%)", human(after), human(sim.dest_free), ratio * 100.0));
+    f.render_widget(gauge, layout[1]);
+
+    let verdict = if sim.fits {
+        Span::styled(format!("✓ fits · {} conflicts · ETA {}", sim.conflicts, fmt_eta(sim.eta_seconds)),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled("✗ WILL NOT FIT — deselect something",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+    };
+    f.render_widget(Paragraph::new(Line::from(verdict)), layout[2]);
 }
 
 fn centered(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
@@ -620,6 +779,46 @@ fn print_help() {
          In the TUI press 'w' to write scribe-plan.json / -selection.txt / -copy.sh.",
         areas = DEFAULT_AREAS.join(",")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_sim_result() {
+        let j = r#"{
+            "dest":"/mnt/backup","dest_free_bytes":1000,"fits":true,"eta_seconds":420,
+            "totals":{"copy_bytes":800,"skip_bytes":50,"conflicts":0},
+            "rows":[{"key":"medical_backups","bytes":800,"action":"copy"},
+                    {"key":"(dedup)","bytes":50,"action":"SKIP"}]
+        }"#;
+        let s = parse_sim(j).expect("should parse");
+        assert_eq!(s.dest, "/mnt/backup");
+        assert_eq!(s.copy_bytes, 800);
+        assert!(s.fits);
+        assert_eq!(s.rows.len(), 2);
+        assert_eq!(s.rows[0].action, "COPY"); // upper-cased
+    }
+
+    #[test]
+    fn rejects_non_sim_text() {
+        assert!(parse_sim("just a log line, not json").is_none());
+        assert!(parse_sim(r#"{"hello":"world"}"#).is_none()); // no rows[]
+    }
+
+    #[test]
+    fn eta_formats() {
+        assert_eq!(fmt_eta(0), "—");
+        assert_eq!(fmt_eta(45), "~45s");
+        assert_eq!(fmt_eta(420), "~7m");
+    }
+
+    #[test]
+    fn group_depth() {
+        assert_eq!(group_of("home/khet/Museum/x.pdf", 2), "home/khet");
+        assert_eq!(group_of("images/a.png", 2), "images");
+    }
 }
 
 fn main() -> io::Result<()> {
