@@ -1,8 +1,8 @@
 [package]
 name = "scribe"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Disk scan + heatmap + select-to-backup TUI for rescue work"
+description = "Disk scan + heatmap + select-to-backup TUI with a pluggable simulation hook"
 
 [dependencies]
 ratatui = "0.28"
