@@ -40,7 +40,7 @@ use ratatui::{
 };
 use walkdir::WalkDir;
 
-const VERSION: &str = "0.3.0";
+const VERSION: &str = "0.3.1";
 const DEFAULT_AREAS: &[&str] = &[
     "home", "medical_backups", "backup", "recovered", "forensics", "images",
     "srv", "opt", "GROK", "mnt2",
@@ -391,6 +391,11 @@ fn group_of(rel: &str, depth: usize) -> String {
 
 fn scan(cfg: &Config) -> Vec<FileRec> {
     let mut files = Vec::new();
+    let mut progress_bytes = 0u64;
+    let mut progress_files = 0u64;
+    let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let mut spin = 0usize;
+
     for area in &cfg.areas {
         let base = cfg.root.join(area);
         if !base.is_dir() {
@@ -412,7 +417,24 @@ fn scan(cfg: &Config) -> Vec<FileRec> {
                 size,
                 group,
             });
+            progress_bytes += size;
+            progress_files += 1;
+
+            // Report progress every 500 files.
+            if progress_files % 500 == 0 {
+                eprint!(
+                    "\r{} scribe: {} files, {}   ",
+                    spinner[spin % spinner.len()],
+                    progress_files,
+                    human(progress_bytes)
+                );
+                spin = spin.wrapping_add(1);
+                let _ = io::stderr().flush();
+            }
         }
+    }
+    if progress_files > 0 {
+        eprintln!("\r✓ scribe: {} files, {}        ", progress_files, human(progress_bytes));
     }
     files
 }

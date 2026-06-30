@@ -209,5 +209,7 @@ on stdout, which scribe renders as a colored panel:
 - [x] v0.3 — structured sim-result rendering (§7.2): projected bars, action
       badges, fit gauge. Example mod: `examples/sim-mod.sh`. Falls back to raw
       text if the executor returns non-sim output.
-- [ ] v0.3 — subfolder expand/collapse in the list; per-row include/exclude.
-- [ ] v0.4 — scan progress bar for very large trees; saved selection profiles.
+- [x] v0.3.1 — scan progress spinner on stderr (shows file count + bytes every
+      500 files during large tree walks; no hanging appearance).
+- [ ] v0.4 — subfolder expand/collapse in the list; per-row include/exclude.
+- [ ] v0.5 — saved selection profiles; multi-threaded scan.

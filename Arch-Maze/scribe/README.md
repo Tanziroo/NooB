@@ -12,6 +12,8 @@ which hooks on without modifying scribe.
 pacman -Sy --noconfirm rust      # if cargo isn't present (needs network)
 cargo build --release
 ./target/release/scribe /mnt/sys
+# During the scan of large trees, a progress spinner shows on stderr
+# Once the TUI starts, pick folders/extensions + press 'x' to simulate
 ```
 
 ## Keys
