@@ -23,16 +23,28 @@ cargo build --release
 | `Tab` | switch Folders ↔ Extensions |
 | `↑/↓` or `j/k` | move |
 | `Space` | toggle select on the highlighted row |
-| `a` / `n` | select all / none (current view) |
-| `w` | write `scribe-plan.json`, `scribe-selection.txt`, `scribe-copy.sh` |
+| `a` / `n` | select all / none of the **visible** rows |
+| `/` | filter the list (type to narrow; `Enter` keep, `Esc` clear) |
+| `w` | **confirm**, then write the plan/manifest/journal + audit log |
 | `x` | simulate: pipe the live plan to `--executor` and show its output |
-| `Esc` | close popup · `q` quit |
+| `Esc` | clear filter / close popup · `q` quit |
+
+## Artifacts written (on `w`, after you confirm)
+
+| file | layer | purpose |
+|------|-------|---------|
+| `scribe-plan.json` | L0 | the contract + `manifest_fingerprint` |
+| `scribe-selection.txt` | — | `rsync --files-from` manifest |
+| `scribe-copy.sh` | — | ready-to-run rsync to your backup drive |
+| `scribe-journal.json` | L2 | per-file `pending` state for a future `--resume` |
+| `scribe-session.log` | L4 | append-only audit line (timestamp + fingerprint) |
 
 ## Safety
 
-scribe only **reads** the scanned tree. It writes the three artifacts in the
-current directory and nothing else. Nothing is copied or deleted until you run
-`scribe-copy.sh` (or your mod does).
+scribe only **reads** the scanned tree. The `w` key never writes silently — it
+opens a confirm popup showing the fingerprint first. Nothing is copied or deleted
+until you run `scribe-copy.sh` (or your mod does). See `LAYERS.md` for the layered
+architecture and `SPEC-v1-LAYERED.md` for the full reasoning.
 
 ---
 

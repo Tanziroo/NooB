@@ -24,8 +24,15 @@
 //
 // KEYS
 //   Tab  switch Folders<->Extensions   ↑/↓ (j/k) move   Space toggle select
-//   a/n  all / none (current view)     w write plan     x simulate via executor
-//   Esc  close popup                   q quit
+//   a/n  all / none (visible rows)     /  filter rows   w write (asks to confirm)
+//   x    simulate via executor         Esc clear filter / close popup   q quit
+//
+// LAYERED ARCHITECTURE (see LAYERS.md). One anchor feature per layer:
+//   L0 manifest  — fingerprint() over the selection, embedded in every artifact
+//   L1 approval  — `w` opens a confirm popup; commit_write only runs on `y`
+//   L2 journal   — scribe-journal.json: resumable per-file backup state
+//   L3 scale     — live `/` filter narrows the list; a/n act on visible rows
+//   L4 audit     — scribe-session.log: append-only record of every commit
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Write};
@@ -40,7 +47,7 @@ use ratatui::{
 };
 use walkdir::WalkDir;
 
-const VERSION: &str = "0.3.1";
+const VERSION: &str = "0.4.0";
 const DEFAULT_AREAS: &[&str] = &[
     "home", "medical_backups", "backup", "recovered", "forensics", "images",
     "srv", "opt", "GROK", "mnt2",
@@ -86,6 +93,7 @@ struct SimResult {
 enum Popup {
     Text(String),
     Sim(SimResult),
+    Confirm(String), // L1: approval gate — shown before any artifacts are written
 }
 
 /// Parse an executor's stdout as a sim-result. Returns None if it isn't valid
@@ -163,14 +171,30 @@ struct App {
     sel_exts: HashSet<String>,
     status: String,
     popup: Option<Popup>,
+    filter: String,    // L3: live filter text (narrows the visible list)
+    filter_mode: bool, // L3: true while the operator is typing the filter
 }
 
 impl App {
-    fn current_rows(&self) -> &[Row] {
-        match self.view {
+    /// All rows for the current view, narrowed by the live filter (L3).
+    /// Every navigation/selection action operates over THIS set, so filtering
+    /// and selecting compose: filter to "med", press `a`, and only the matching
+    /// rows are picked.
+    fn visible_rows(&self) -> Vec<&Row> {
+        let all = match self.view {
             View::Folders => &self.folders,
             View::Exts => &self.exts,
+        };
+        if self.filter.is_empty() {
+            all.iter().collect()
+        } else {
+            let needle = self.filter.to_lowercase();
+            all.iter().filter(|r| r.key.to_lowercase().contains(&needle)).collect()
         }
+    }
+
+    fn reset_cursor(&mut self) {
+        self.state.select(Some(0));
     }
 
     fn is_selected(&self, key: &str) -> bool {
@@ -182,9 +206,12 @@ impl App {
 
     fn toggle_current(&mut self) {
         let idx = self.state.selected().unwrap_or(0);
-        let key = match self.current_rows().get(idx) {
-            Some(r) => r.key.clone(),
-            None => return,
+        let key = {
+            let vis = self.visible_rows();
+            match vis.get(idx) {
+                Some(r) => r.key.clone(),
+                None => return,
+            }
         };
         let set = match self.view {
             View::Folders => &mut self.sel_folders,
@@ -195,15 +222,28 @@ impl App {
         }
     }
 
+    /// `a`/`n` act on the VISIBLE rows. With no filter this is "all/none"; with a
+    /// filter it adds/removes just the matching rows, preserving other picks.
     fn select_all(&mut self, all: bool) {
-        let keys: Vec<String> = self.current_rows().iter().map(|r| r.key.clone()).collect();
+        let keys: Vec<String> = self.visible_rows().iter().map(|r| r.key.clone()).collect();
+        let filtered = !self.filter.is_empty();
         let set = match self.view {
             View::Folders => &mut self.sel_folders,
             View::Exts => &mut self.sel_exts,
         };
-        set.clear();
-        if all {
-            set.extend(keys);
+        if filtered {
+            if all {
+                set.extend(keys);
+            } else {
+                for k in &keys {
+                    set.remove(k);
+                }
+            }
+        } else {
+            set.clear();
+            if all {
+                set.extend(keys);
+            }
         }
     }
 
@@ -220,8 +260,9 @@ impl App {
     }
 
     fn move_by(&mut self, delta: isize) {
-        let len = self.current_rows().len();
+        let len = self.visible_rows().len();
         if len == 0 {
+            self.state.select(Some(0));
             return;
         }
         let cur = self.state.selected().unwrap_or(0) as isize;
@@ -247,6 +288,9 @@ impl App {
         s.push_str(&format!("    \"extensions\": [{}]\n", json_arr(&exts)));
         s.push_str("  },\n");
         s.push_str(&format!("  \"summary\": {{ \"files\": {}, \"bytes\": {} }},\n", n, bytes));
+        // L0: deterministic fingerprint of the exact selection. Downstream tools
+        // (and the journal) use it to confirm they're acting on the same set.
+        s.push_str(&format!("  \"manifest_fingerprint\": \"{}\",\n", fingerprint(&files)));
         s.push_str("  \"files\": [\n");
         for (i, f) in files.iter().enumerate() {
             let comma = if i + 1 < files.len() { "," } else { "" };
@@ -261,13 +305,51 @@ impl App {
         s
     }
 
-    fn write_plan(&mut self) {
+    /// L1 (approval gate): `w` no longer writes immediately. It builds a summary
+    /// — including the L0 fingerprint — and asks the operator to confirm. Nothing
+    /// touches the filesystem until `commit_write`.
+    fn prepare_write(&mut self) {
         let files = self.selected_files();
         if files.is_empty() {
             self.status = "Nothing selected — pick folders/extensions first (Space).".into();
             return;
         }
+        let bytes: u64 = files.iter().map(|f| f.size).sum();
+        let n = files.len();
+        let fp = fingerprint(&files);
+        let summary = format!(
+            "About to write a backup plan:\n\n  \
+             files:        {n}\n  \
+             bytes:        {}\n  \
+             fingerprint:  {fp}\n  \
+             folders:      {}    extensions: {}\n\n\
+             Writes (plans only — nothing is copied):\n  \
+             • scribe-plan.json      (the contract + fingerprint)\n  \
+             • scribe-selection.txt  (rsync manifest)\n  \
+             • scribe-copy.sh        (ready-to-run rsync)\n  \
+             • scribe-journal.json   (resumable backup state)\n  \
+             • scribe-session.log    (append-only audit entry)\n\n\
+             Commit?   [y] yes    [n] no",
+            human(bytes),
+            self.sel_folders.len(),
+            self.sel_exts.len(),
+        );
+        self.popup = Some(Popup::Confirm(summary));
+    }
+
+    /// L2 + L4: the only place that writes to disk. Emits the plan, manifest,
+    /// rsync script, a resumable journal (L2), and appends an immutable audit
+    /// line to the session log (L4) — all keyed to one fingerprint (L0).
+    fn commit_write(&mut self) {
+        let files = self.selected_files();
+        if files.is_empty() {
+            self.status = "Nothing selected.".into();
+            return;
+        }
         let lines: Vec<String> = files.iter().map(|f| f.rel.clone()).collect();
+        let bytes: u64 = files.iter().map(|f| f.size).sum();
+        let fp = fingerprint(&files);
+        let ts = now_epoch();
 
         let plan = self.build_plan_json();
         let copy = format!(
@@ -276,16 +358,27 @@ impl App {
             root = self.cfg.root.display(),
             n = lines.len(),
         );
+        let journal = build_journal(&files, &fp, ts, &self.cfg.root);
 
         let r1 = std::fs::write("scribe-selection.txt", lines.join("\n") + "\n");
         let r2 = std::fs::write("scribe-plan.json", &plan);
         let r3 = std::fs::write("scribe-copy.sh", copy);
-        self.status = match (r1, r2, r3) {
-            (Ok(_), Ok(_), Ok(_)) => format!(
-                "Wrote scribe-plan.json / -selection.txt / -copy.sh  ({} files). Run: bash scribe-copy.sh",
+        let r4 = std::fs::write("scribe-journal.json", journal);
+        let r5 = append_session_log(&format!(
+            "ts={ts} version={VERSION} root={} files={} bytes={bytes} fp={fp} folders={} exts={}",
+            self.cfg.root.display(),
+            lines.len(),
+            self.sel_folders.len(),
+            self.sel_exts.len(),
+        ));
+
+        self.status = if r1.is_ok() && r2.is_ok() && r3.is_ok() && r4.is_ok() && r5.is_ok() {
+            format!(
+                "Committed {} files (fp {fp}): plan+manifest+journal written, session logged. Run: bash scribe-copy.sh",
                 lines.len()
-            ),
-            _ => "ERROR writing artifacts (permission? disk full?)".into(),
+            )
+        } else {
+            "ERROR writing artifacts (permission? disk full?)".into()
         };
     }
 
@@ -333,6 +426,61 @@ fn json_arr(items: &[&String]) -> String {
         .map(|s| format!("\"{}\"", json_esc(s)))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// L0 anchor: a deterministic 64-bit FNV-1a fingerprint over the selection
+/// (sorted `(path, size)` pairs). Order-independent and stable, so the same set
+/// always yields the same hex string — the integrity key for plan + journal.
+fn fingerprint(files: &[&FileRec]) -> String {
+    let mut keyed: Vec<(&str, u64)> = files.iter().map(|f| (f.rel.as_str(), f.size)).collect();
+    keyed.sort();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    for (rel, size) in keyed {
+        for b in rel.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(PRIME);
+        }
+        h ^= size;
+        h = h.wrapping_mul(PRIME);
+    }
+    format!("{h:016x}")
+}
+
+fn now_epoch() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// L2 anchor: the resumable backup journal. Every selected file starts `pending`;
+/// a future `--resume` reads this, checks what already landed, and continues.
+fn build_journal(files: &[&FileRec], fp: &str, ts: u64, root: &Path) -> String {
+    let mut s = String::new();
+    s.push_str("{\n");
+    s.push_str(&format!("  \"scribe_version\": \"{VERSION}\",\n"));
+    s.push_str(&format!("  \"created_epoch\": {ts},\n"));
+    s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&root.to_string_lossy())));
+    s.push_str(&format!("  \"manifest_fingerprint\": \"{fp}\",\n"));
+    s.push_str("  \"status\": \"pending\",\n");
+    s.push_str("  \"entries\": [\n");
+    for (i, f) in files.iter().enumerate() {
+        let c = if i + 1 < files.len() { "," } else { "" };
+        s.push_str(&format!(
+            "    {{ \"path\": \"{}\", \"bytes\": {}, \"status\": \"pending\" }}{}\n",
+            json_esc(&f.rel),
+            f.size,
+            c
+        ));
+    }
+    s.push_str("  ]\n}\n");
+    s
+}
+
+/// L4 anchor: append-only audit. One line per committed plan, never rewritten.
+fn append_session_log(line: &str) -> io::Result<()> {
+    use std::fs::OpenOptions;
+    let mut f = OpenOptions::new().create(true).append(true).open("scribe-session.log")?;
+    writeln!(f, "{line}")
 }
 
 fn run_executor(prog: &str, plan: &str) -> String {
@@ -537,8 +685,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
-    // ---- main list ----
-    let rows = app.current_rows();
+    // ---- main list (filtered, L3) ----
+    let rows = app.visible_rows();
     let max = rows.first().map(|r| r.size).unwrap_or(0);
     let items: Vec<ListItem> = rows
         .iter()
@@ -555,11 +703,27 @@ fn ui(f: &mut Frame, app: &mut App) {
             ]))
         })
         .collect();
+    let title = if app.filter.is_empty() {
+        format!(" {} items — Space pick · a all · n none · / filter ", rows.len())
+    } else {
+        format!(
+            " {} items — filter: \"{}{}\"  (Esc clear) ",
+            rows.len(),
+            app.filter,
+            if app.filter_mode { "▏" } else { "" }
+        )
+    };
+    let title_style = if app.filter_mode {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            " {} items — Space pick · a all · n none ",
-            rows.len()
-        )))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(title, title_style)),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     f.render_stateful_widget(list, chunks[1], &mut app.state);
 
@@ -594,26 +758,42 @@ fn ui(f: &mut Frame, app: &mut App) {
     ]));
     f.render_widget(summary, foot[1]);
 
-    let help = "Tab switch · ↑↓ move · Space pick · a/n all/none · w write plan · x simulate · q quit";
-    let status = Paragraph::new(if app.status.is_empty() { help.to_string() } else { app.status.clone() })
+    let help = if app.filter_mode {
+        "type to filter · Enter keep · Esc clear".to_string()
+    } else {
+        "Tab switch · ↑↓ move · Space pick · a/n all/none · / filter · w write · x simulate · q quit".to_string()
+    };
+    let status = Paragraph::new(if app.status.is_empty() { help } else { app.status.clone() })
         .style(Style::default().fg(Color::Gray))
         .wrap(Wrap { trim: true });
     f.render_widget(status, foot[2]);
 
-    // ---- popup (simulation output) ----
+    // ---- popup ----
     if let Some(popup) = &app.popup {
         let area = centered(72, 74, f.area());
         f.render_widget(Clear, area);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" simulation output — Esc to close ")
-            .border_style(Style::default().fg(Color::Magenta));
         match popup {
             Popup::Text(text) => {
-                let p = Paragraph::new(text.clone()).block(block).wrap(Wrap { trim: false });
-                f.render_widget(p, area);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" simulation output — Esc to close ")
+                    .border_style(Style::default().fg(Color::Magenta));
+                f.render_widget(Paragraph::new(text.clone()).block(block).wrap(Wrap { trim: false }), area);
             }
-            Popup::Sim(sim) => render_sim(f, area, block, sim),
+            Popup::Sim(sim) => {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" simulation output — Esc to close ")
+                    .border_style(Style::default().fg(Color::Magenta));
+                render_sim(f, area, block, sim);
+            }
+            Popup::Confirm(msg) => {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" confirm write — [y] commit   [n] cancel ")
+                    .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+                f.render_widget(Paragraph::new(msg.clone()).block(block).wrap(Wrap { trim: false }), area);
+            }
         }
     }
 }
@@ -720,31 +900,79 @@ fn run(terminal: &mut Terminal<impl Backend>, app: &mut App) -> io::Result<()> {
             if k.kind != KeyEventKind::Press {
                 continue;
             }
-            // Popup eats most keys until closed.
+            // Popup eats keys until closed. Confirm (L1) needs y/n; others close.
             if app.popup.is_some() {
+                let is_confirm = matches!(app.popup, Some(Popup::Confirm(_)));
+                if is_confirm {
+                    match k.code {
+                        KeyCode::Char('y') => {
+                            app.popup = None;
+                            app.commit_write();
+                        }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            app.popup = None;
+                            app.status = "Write cancelled.".into();
+                        }
+                        KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }
+                } else {
+                    match k.code {
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('x') => app.popup = None,
+                        KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+
+            // Filter typing (L3) intercepts keys before normal commands.
+            if app.filter_mode {
                 match k.code {
-                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('x') => app.popup = None,
-                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Esc => {
+                        app.filter_mode = false;
+                        app.filter.clear();
+                        app.reset_cursor();
+                    }
+                    KeyCode::Enter => app.filter_mode = false,
+                    KeyCode::Backspace => {
+                        app.filter.pop();
+                        app.reset_cursor();
+                    }
+                    KeyCode::Char(c) => {
+                        app.filter.push(c);
+                        app.reset_cursor();
+                    }
                     _ => {}
                 }
                 continue;
             }
+
             app.status.clear();
             match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('q') => return Ok(()),
+                KeyCode::Esc => {
+                    // Esc clears an active filter first, then quits.
+                    if app.filter.is_empty() {
+                        return Ok(());
+                    }
+                    app.filter.clear();
+                    app.reset_cursor();
+                }
+                KeyCode::Char('/') => app.filter_mode = true,
                 KeyCode::Tab => {
                     app.view = match app.view {
                         View::Folders => View::Exts,
                         View::Exts => View::Folders,
                     };
-                    app.state.select(Some(0));
+                    app.reset_cursor();
                 }
                 KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                 KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
                 KeyCode::Char(' ') | KeyCode::Enter => app.toggle_current(),
                 KeyCode::Char('a') => app.select_all(true),
                 KeyCode::Char('n') => app.select_all(false),
-                KeyCode::Char('w') => app.write_plan(),
+                KeyCode::Char('w') => app.prepare_write(),
                 KeyCode::Char('x') => app.simulate(),
                 _ => {}
             }
@@ -798,7 +1026,9 @@ fn print_help() {
          --depth       folder-grouping depth for the Folders view (default 2)\n\
          --executor    program to pipe scribe-plan.json to on 'x' (your sim mod)\n\
          --json        print the scan as JSON and exit (no TUI)\n\n\
-         In the TUI press 'w' to write scribe-plan.json / -selection.txt / -copy.sh.",
+         In the TUI: '/' filters the list, 'w' asks to confirm then writes\n\
+         scribe-plan.json / -selection.txt / -copy.sh / -journal.json and\n\
+         appends an audit line to scribe-session.log.",
         areas = DEFAULT_AREAS.join(",")
     );
 }
@@ -840,6 +1070,28 @@ mod tests {
     fn group_depth() {
         assert_eq!(group_of("home/khet/Museum/x.pdf", 2), "home/khet");
         assert_eq!(group_of("images/a.png", 2), "images");
+    }
+
+    fn rec(rel: &str, size: u64) -> FileRec {
+        FileRec { rel: rel.into(), size, ext: "x".into(), group: "g".into() }
+    }
+
+    #[test]
+    fn fingerprint_is_stable_and_order_independent() {
+        let a = rec("home/a.txt", 10);
+        let b = rec("home/b.txt", 20);
+        let f1 = fingerprint(&[&a, &b]);
+        let f2 = fingerprint(&[&b, &a]); // different order, same set
+        assert_eq!(f1, f2);
+        assert_eq!(f1.len(), 16);
+    }
+
+    #[test]
+    fn fingerprint_changes_when_size_changes() {
+        let a = rec("home/a.txt", 10);
+        let b = rec("home/b.txt", 20);
+        let a2 = rec("home/a.txt", 11); // one byte different
+        assert_ne!(fingerprint(&[&a, &b]), fingerprint(&[&a2, &b]));
     }
 }
 
@@ -908,6 +1160,8 @@ fn main() -> io::Result<()> {
         sel_exts: HashSet::new(),
         status: String::new(),
         popup: None,
+        filter: String::new(),
+        filter_mode: false,
     };
 
     let mut terminal = ratatui::init();

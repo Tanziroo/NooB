@@ -104,6 +104,29 @@
 
 ---
 
+## v0.4 — One Anchor Feature Implemented Per Layer (the lattice)
+
+Each layer's highest-signal anchor is now real in code (`src/main.rs`), and the
+five interlock into one flow rather than five isolated features:
+
+| Layer | Anchor feature (shipped) | Where | Interlock |
+|-------|--------------------------|-------|-----------|
+| L0 | `fingerprint()` — deterministic FNV-1a over the sorted selection | `fn fingerprint` | feeds L1 popup, L2 journal, L4 log |
+| L1 | Confirm-before-write popup (`w` → `prepare_write` → `[y]`) | `Popup::Confirm` | shows L0 fingerprint; gates L2/L4 |
+| L2 | `scribe-journal.json` — per-file `pending` state for `--resume` | `build_journal` | keyed by L0 fingerprint |
+| L3 | Live `/` filter; `a`/`n` act on visible rows | `visible_rows` | scopes what L1 commits |
+| L4 | `scribe-session.log` — append-only audit line per commit | `append_session_log` | records L0 fingerprint |
+
+**The single flow:** `/` filter to find a subtree (L3) → `Space` select → `w`
+opens an approval popup showing the fingerprint (L1 + L0) → `y` writes the plan,
+manifest, rsync script, resumable journal (L2), and appends an immutable audit
+line (L4). Filtering changes *what* gets committed; the fingerprint ties all
+artifacts to one exact set; the approval gate means nothing is written blind.
+
+Tests: 6/6 pass (`fingerprint` stability + sensitivity, sim parse, eta, group).
+
+---
+
 ## How to Read This Architecture
 
 1. **North Star:** Deliberate selection under uncertainty.

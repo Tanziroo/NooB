@@ -1,6 +1,6 @@
 [package]
 name = "scribe"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Disk scan + heatmap + select-to-backup TUI with a pluggable simulation hook"
 
