@@ -174,3 +174,34 @@ D. STOP. Print: "Awaiting selection (enter item numbers)." Do nothing further.
 **Rebuilt grade (self-check): A− (~92).** Remaining gap: reproducibility across
 model runs is *by construction* but not *guaranteed* at temperature > 0 — run the
 grader at temp 0 for a truly stable canonical record.
+
+---
+
+## 7. SELF-AUDIT (dialectic on my own grade)
+
+**Correction first (own error):** the §2 scorecard weights sum to **105**, not 100
+(D7 listed at 10; the rubric defines it as 5). Recomputed with correct weights the
+standalone score is ~44/100 — still F, but my quantification was inconsistent and
+is flagged here rather than left standing.
+
+**Frame error:** §2–4 graded this as a self-contained artifact. It is explicitly
+"Silo 1: Ryan, Primary Operator" — a component inside an established operator
+framework. Two of my three "fatal flaws" are frame-dependent:
+
+- The Merkle hash: `[GENERATED_POST_SELECTION]` plausibly means the HARNESS
+  computes it post-run — which is the honest pattern I recommended. I pattern-
+  matched to "LLM fabricates a hash" without steelmanning the placeholder. Partial
+  misread.
+- The jargon: if defined in a standing glossary/Anchors, it is compression, not
+  noise.
+
+**Revised verdict (frame-dependent):**
+- As a standalone forensic artifact: **F (~44)** — "forensic" demands self-
+  containment it lacks.
+- As an in-harness operator component (terms defined + harness-generated hash +
+  trusted corpus): **B+/A− (~88–92)**.
+
+**The finding that survives BOTH frames:** the prompt does not DECLARE its trust
+boundaries. Single-line fix: "Terms per Anchors. 'High-signal' per Anchors. Merkle
+root computed by harness post-selection; model must not emit a hash." With that
+declaration, the artifact becomes auditable and most of the F dissolves.
