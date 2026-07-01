@@ -73,3 +73,39 @@ independently proven — not before.
   use, a defended contract? That is the trigger to start assembling.
 - Is the host anchor a key, a login/TPM binding, or both?
 - Does the permission lattice live in a file, or in the attestation device itself?
+
+---
+
+## The epistemic core (operator's principle)
+
+> "You can never truly be 100% sure unless you binary the choice, but each layer
+> collapses vectorpoints."
+
+This is the North Star of the whole attestation model:
+
+1. **Certainty is asymptotic.** No stack of evidence reaches 1.0. More layers move
+   you toward the decision boundary; they never arrive at it.
+2. **The only 100% is the binary.** Certainty exists only at the moment you *force
+   the collapse* — seal / refuse, trust / don't. It is manufactured by the
+   decision, not discovered in the evidence.
+3. **Uncertainty is a vector space, not a scalar.** Its axes: content-integrity,
+   history-integrity, authority, location, proximity, liveness, media-provenance,
+   distributed-trust, time. (Extensible.)
+4. **Each layer collapses one axis.** A layer removes a degree of freedom the
+   adversary could hide in. It does not empty the space — it collapses a
+   vectorpoint. Compose more layers → collapse more axes → the possibility space
+   shrinks toward the decision.
+5. **The residual is never empty, and honesty requires naming it.** A seal must
+   report which axes it collapsed AND which it did not. Claiming a collapsed axis
+   you did not attest is the fabricated-seal failure (Label ≤ Mechanism).
+
+**Operationalized in `sealgate`:** each contract clause maps to an axis
+(`KNOWN_LAYERS`). The report prints the collapse profile — "collapsed axes
+(6/9) … residual uncertainty (not attested) …" — and the verdict is explicitly the
+binary collapse, "the only 100% is the decision, not the evidence." Verified: full
+stack collapses 6/9 and seals; drop the device and it collapses 1/9 and refuses.
+
+**Where the new pieces land** (each a collapse layer, plugged in as a verifier):
+merkle chaining → history-integrity · distance layers → proximity · knock/liveness
+→ liveness · zk-proof audio/video → media-provenance. The harnesses test that each
+layer actually collapses its axis before a contract is allowed to rely on it.

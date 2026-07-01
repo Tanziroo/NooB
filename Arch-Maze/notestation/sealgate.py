@@ -90,6 +90,22 @@ BUILTINS = {
     "content_hash": _v_content_hash,
 }
 
+# The uncertainty space. Each clause collapses ONE axis of it. You never zero the
+# space out — certainty is asymptotic; the binary verdict is the forced collapse —
+# but each satisfied layer removes a degree of freedom the adversary could hide in.
+# (clause -> (axis it collapses, what "collapsed" means))
+KNOWN_LAYERS = {
+    "content_hash":   ("content-integrity", "the bytes are unchanged"),
+    "merkle_chain":   ("history-integrity", "the log/order was not rewritten"),
+    "signer_perm":    ("authority",         "who signed, at what permission"),
+    "host_in":        ("location",          "which host/desk it came from"),
+    "distance":       ("proximity",         "physical/network nearness"),
+    "liveness_knock": ("liveness",          "a live present party, not a replay"),
+    "zk_media":       ("media-provenance",  "audio/video authenticity, zero-knowledge"),
+    "cosign":         ("distributed-trust", "multiple independent signers"),
+    "timestamp":      ("time",              "it existed at time T"),
+}
+
 
 def _run_external(cmd, clause, value, ctx):
     """Call an operator-supplied verifier. It reads ctx JSON on stdin, prints
@@ -134,11 +150,22 @@ def _evaluate(contract, artifact, verifiers):
 def _print_report(contract, ctx, results, passed):
     print(f"contract level: {contract.get('level', '?')}   artifact: {ctx['artifact']}")
     print(f"artifact sha256: {ctx['artifact_sha256']}")
-    print("clauses:")
+    print("clauses (each collapses one axis of the uncertainty space):")
     for r in results:
         mark = "PASS" if r["ok"] else "FAIL"
-        print(f"  [{mark}] {r['clause']} ({r['src']}) = {json.dumps(r['value'])}  — {r['detail']}")
-    print(f"VERDICT: {'SEAL PERMITTED' if passed else 'REFUSED'}")
+        axis = KNOWN_LAYERS.get(r["clause"], ("unclassified", ""))[0]
+        print(f"  [{mark}] {r['clause']} <{axis}> ({r['src']}) = {json.dumps(r['value'])}  — {r['detail']}")
+
+    # Collapse profile: which axes this seal actually collapsed, and — honestly —
+    # which known axes it did NOT. The residual is never empty; 100% is only the
+    # binary verdict, never the evidence.
+    collapsed = sorted({KNOWN_LAYERS[r["clause"]][0] for r in results if r["ok"] and r["clause"] in KNOWN_LAYERS})
+    all_axes = sorted({a for a, _ in KNOWN_LAYERS.values()})
+    residual = [a for a in all_axes if a not in collapsed]
+    print(f"collapsed axes ({len(collapsed)}/{len(all_axes)}): {', '.join(collapsed) or 'none'}")
+    print(f"residual uncertainty (not attested): {', '.join(residual) or 'none'}")
+    print(f"VERDICT: {'SEAL PERMITTED' if passed else 'REFUSED'}  "
+          f"(binary collapse — the only 100% is the decision, not the evidence)")
 
 
 def _load(path):
