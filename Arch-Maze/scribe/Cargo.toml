@@ -1,6 +1,6 @@
 [package]
 name = "scribe"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Disk scan + heatmap + select-to-backup TUI with a pluggable simulation hook"
 
@@ -9,6 +9,7 @@ ratatui = "0.28"
 crossterm = "0.28"
 walkdir = "2"
 serde_json = "1"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 2

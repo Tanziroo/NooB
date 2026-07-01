@@ -165,3 +165,37 @@ seq=42 ts=1751320000 version=0.5.0 root=/mnt/sys files=1615 bytes=15.9e9 \
   marketed as court-admissible until Ring C + external anchoring (v2) land.**
 
 **Verdict:** approved as the next build, gated behind flags, wedge path untouched.
+
+---
+
+## 11. IMPLEMENTED — Ring A (v0.5.0)
+
+scribe is now a real signer. Shipped:
+- `--hash` (verified tier): streams SHA-256 of every selected file on write;
+  embeds per-file `sha256` + a Merkle-style `manifest_sha256` in the plan and
+  journal; also emits `scribe-manifest.sha256` (coreutils `sha256sum -c` format).
+- `--verify <plan.json> [root]`: re-hashes the tree, confirms every file matches
+  the signed manifest, recomputes the root. Exit 0 = intact, 1 = changed/missing,
+  2 = plan is fast-tier (no seal). Verified end-to-end: intact→VERIFIED,
+  one tampered byte→CHANGED/FAILED.
+- Fast tier (FNV, default) unchanged; `attestation_tier` field records which tier
+  sealed a plan. Ring B (ed25519 signing) and Ring C (hash-chained log) are next.
+
+## 12. The CONTRACT LAYER (attestation ladder) — operator insight
+
+The tier is not just a rigor dial; it is a **contract ladder**. Higher-stakes work
+requires deeper attestation, automatically, by the contract's declared level:
+
+| Contract level | Attestation required | Mechanism (who signs) |
+|----------------|----------------------|------------------------|
+| L0 casual | fast fingerprint (FNV) | scribe, `--` default |
+| L1 verified | content SHA-256 seal | scribe `--hash` (code) |
+| L2 signed | + author signature | scribe `--sign` (ed25519, Ring B) |
+| L3 custody | + hash-chained audit + external timestamp | scribe + notary (Ring C / v2) |
+| L4 sealed | + obfuscation / restricted access / multi-party attestation | Notestation policy |
+
+Rule: a contract of level N will not `commit` unless the attestation for level N was
+actually produced (Label ≤ Mechanism, enforced in code). The Notestation Layer reads
+a contract's declared level and refuses to seal until the matching signer has run —
+so "more serious" is not a vibe, it is a gate. This is the same tiered-rigor dial as
+`dial`, applied to obligations instead of prompts.
