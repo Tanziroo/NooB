@@ -7,6 +7,13 @@
 
 **Deliberate selection, honest signing, gated sealing.**
 
+> **What we validate:** that a specific artifact was *present, in a specific
+> byte-for-byte state, at a specific time* — as computed by a named mechanism.
+> Built for **low-stakes, trust-but-verify contract verification**: you get
+> independently-checkable evidence, **not a guarantee**. Higher-stakes, money-backed
+> assurance is available through insured third-party partners (see
+> [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md)).
+
 Three small tools for high-stakes work where you must decide under uncertainty and
 *prove* what you decided. They share one principle:
 

@@ -61,8 +61,29 @@ collapses a vectorpoint; the seal is the binary that forces the decision.* The s
 records that decision and the evidence behind it — it does not pretend to be proof
 of truth.
 
+## Who carries the liability (two tiers)
+
+The base tool and the insured layer are deliberately separate, so the free product
+never quietly takes on liability it can't back:
+
+- **Base tier — self-serve, low-stakes / trust-but-verify.** The default. It emits
+  independently-verifiable evidence and assumes **no liability**. A relying party
+  weighs the evidence at its own discretion — exactly as it would any other
+  trust-but-verify signal. This is what the software in this repository provides.
+- **Insured tier — third-party partner, higher-stakes.** Opt-in. A partner
+  (auditor / notary / insurer) verifies to a higher standard, composes additional
+  attestation layers, **charges a fee, and backs the attestation with an insurance
+  policy.** The liability is carried by the insuring partner under that policy's
+  terms — **not** by the base tool or its authors. Bigger client → insured tier →
+  more layers + underwritten assurance.
+
+The tool's job is to produce clean, independently-checkable evidence at any tier;
+whether that evidence is *insured* is a separate, opt-in commercial layer.
+
 ## No warranty
 
 The software is provided "AS IS" under the MIT License (see `LICENSE`), without
 warranty of any kind. Nothing in a seal or in this repository creates a warranty,
-guarantee, or liability on the part of the authors.
+guarantee, or liability on the part of the authors. Money-backed assurance exists
+only where an insured-tier partner has explicitly underwritten it in a separate
+agreement.
