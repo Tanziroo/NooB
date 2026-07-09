@@ -1,0 +1,134 @@
+# Notestation Protocol
+
+`protocol_version: 0.1`
+
+Notestation is a **middle layer**: the tight, versioned protocol that small
+attestation transactions flow through. It does not own the endpoints — it owns the
+formats and interfaces everyone conforms to, and keeps them tight and current.
+
+```
+   relying parties · insured partners        (above: judge trust, underwrite)
+                    ▲
+   ── the protocol (this document) ──         (middle: uniform records + interfaces)
+                    ▼
+   attestation devices · anchors · verifiers  (below: prove individual axes)
+```
+
+The tools in this repo are one conforming implementation. Anyone can build another
+that speaks the same protocol; that is the point.
+
+---
+
+## Design rules (what "tight" means)
+
+1. **Additive-by-default.** New fields/layers are minor versions. Consumers **must
+   ignore unknown fields** and keep working.
+2. **Fail-closed on unknown *required* layers.** A verifier/gate that doesn't
+   understand a required clause must REFUSE, never assume-pass.
+3. **Deterministic records.** The same inputs produce byte-identical canonical
+   records, so any party can recompute and hash them independently.
+4. **No fabricated values.** Every hash/signature is computed by code and
+   independently checkable (`sha256sum`, any ed25519 verifier). Label ≤ Mechanism.
+5. **Breaking changes bump the major** and are listed in the changelog below.
+
+---
+
+## Surface 1 — Plan record (`scribe-plan.json`)
+
+The unit of a transaction: what was selected, and its seal.
+
+```json
+{
+  "scribe_version": "0.6.0",
+  "root": "/path",
+  "attestation_tier": "fast-fnv | verified-sha256 | signed-ed25519",
+  "selection": { "folders": [], "extensions": [] },
+  "summary": { "files": 0, "bytes": 0 },
+  "manifest_fingerprint": "<fnv64 hex>",            // always
+  "manifest_sha256": "<hex>",                        // verified+ tiers
+  "signature": { "algo": "ed25519", "pubkey": "<hex>", "sig": "<hex>" },  // signed tier
+  "files": [ { "path": "rel", "bytes": 0, "sha256": "<hex>" } ]
+}
+```
+
+## Surface 2 — Canonical record + external seal
+
+A deterministic, prose-free block a party hashes **outside** the producer. Ends with:
+
+```
+<fixed TAB-separated fields, one line per item, sorted>
+anchors_digest=<anchors, whitespace-normalized, one line>
+seal=[GENERATED_POST_RUN_BY_HARNESS]      # external tool runs sha256sum; the producer never fills this
+```
+
+## Surface 3 — Hash-chained audit log (`scribe-session.log`)
+
+Append-only, tamper-evident. One entry per committed transaction:
+
+```
+seq=<n> <fields...> prev=<self of entry n-1 | 64 zeros> self=<sha256(line without " self=")>
+```
+
+Verify by recomputing each `self` and checking `prev` links. Breaks localize to the
+first altered entry.
+
+## Surface 4 — Verifier interface (how a device plugs in)
+
+A verifier proves one axis. It reads context JSON on **stdin**, writes a verdict on
+**stdout**. Any failure = not satisfied (fail-closed).
+
+```
+stdin:   { "clause": "signer_perm", "value": "L2", "artifact": "deal.txt", "artifact_sha256": "<hex>" }
+stdout:  { "ok": true, "detail": "signer Ryan@desk-A, perm L3 >= L2" }
+```
+
+## Surface 5 — Layer / axis taxonomy (the collapse space)
+
+Each clause collapses one axis of uncertainty. Registry (extensible; additive):
+
+| clause | axis | collapses |
+|--------|------|-----------|
+| `content_hash` | content-integrity | the bytes are unchanged |
+| `merkle_chain` | history-integrity | the log/order was not rewritten |
+| `signer_trusted` | key-trust | the signer's key is pinned by the verify layer |
+| `signer_perm` | authority | who signed, at what permission |
+| `host_in` | location | which host/desk it came from |
+| `distance` | proximity | physical/network nearness |
+| `liveness_knock` | liveness | a live present party, not a replay |
+| `zk_media` | media-provenance | audio/video authenticity, zero-knowledge |
+| `cosign` | distributed-trust | multiple independent signers |
+| `timestamp` | time | it existed at time T |
+
+## Surface 6 — Simulation result (optional, executor → viewer)
+
+```json
+{ "dest": "...", "dest_free_bytes": 0, "fits": true, "eta_seconds": 0,
+  "totals": { "copy_bytes": 0, "skip_bytes": 0, "conflicts": 0 },
+  "rows": [ { "key": "...", "bytes": 0, "action": "COPY|SKIP|CONFLICT|DEDUP" } ] }
+```
+
+---
+
+## Transaction tiers (throughput vs. assurance)
+
+Small transactions stay cheap; assurance is opt-in per contract.
+
+| tier | seal | per-txn cost | for |
+|------|------|--------------|-----|
+| `fast-fnv` | FNV fingerprint | ~free | high-volume, low-stakes |
+| `verified-sha256` | SHA-256 content seal | one read pass | trust-but-verify |
+| `signed-ed25519` | + signature | one sign | attributable |
+| *insured* | + partner-underwritten layers | fee + premium | high-stakes (off-protocol commercial layer) |
+
+The middle layer's job: keep every tier's record **uniform and tiny**, so millions
+of small transactions interoperate and remain independently verifiable.
+
+---
+
+## Changelog
+
+- **0.1** — initial: plan record, canonical record + external seal, hash-chained
+  log, verifier interface, 10-axis taxonomy, sim-result. Tiers fast/verified/signed.
+
+Scope of what a seal claims (and does not) is in
+[`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).

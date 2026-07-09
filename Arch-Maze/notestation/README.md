@@ -52,6 +52,12 @@ Each is proven standalone. Wiring an external attestation device (identity/permi
 lattice, host + signer anchors, zk-media / liveness / distance verifiers) is done by
 registering **verifier commands** with `sealgate` — see [`sealgate/README.md`](sealgate/README.md).
 
+**Notestation is a middle layer — a protocol.** The tools are one conforming
+implementation; the versioned wire formats and interfaces that small transactions
+flow through are in [`PROTOCOL.md`](PROTOCOL.md). Devices/verifiers plug in below;
+relying parties and insured partners sit above; the protocol keeps every transaction
+uniform, tiny, and independently verifiable.
+
 ---
 
 ## Quickstart
