@@ -199,3 +199,24 @@ actually produced (Label ≤ Mechanism, enforced in code). The Notestation Layer
 a contract's declared level and refuses to seal until the matching signer has run —
 so "more serious" is not a vibe, it is a gate. This is the same tiered-rigor dial as
 `dial`, applied to obligations instead of prompts.
+
+---
+
+## 13. IMPLEMENTED — Ring B + Ring C (v0.6.0)
+
+- **Ring B (signing):** `--gen-key <path>` creates an ed25519 keypair (hex);
+  `--sign <key>` (implies `--hash`) signs the `manifest_sha256` and embeds
+  `signature{algo,pubkey,sig}` in the plan + writes detached `scribe-plan.sig`.
+  `--verify` now checks the signature too (valid/invalid), noting that key trust
+  requires out-of-band pinning. Tier recorded as `signed-ed25519`.
+- **Ring C (hash-chained audit):** `scribe-session.log` is now a hash chain —
+  each line carries `prev=<self of previous>` and `self=sha256(line-without-self)`.
+  `--verify-log [path]` walks the chain and reports the first break (exit 0 intact,
+  1 broken). Verified: intact→0, single-field edit→BROKEN at the right seq. The
+  format is plain enough to re-check with `sha256sum`.
+- Tests: 11 total (added ed25519 sign/verify roundtrip incl. wrong-key/wrong-msg,
+  hex roundtrip, hash-chain tamper detection). clippy `-D warnings` clean.
+
+Remaining (deferred, honest): the **two-anchor** signature (bind host anchor +
+signer anchor) and external timestamp/notary anchoring — composed at the seal-gate
+with the operator's device, per NOTESTATION-CONCEPT.

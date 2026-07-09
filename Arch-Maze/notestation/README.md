@@ -73,13 +73,17 @@ VERDICT: SEAL PERMITTED  (binary collapse — the only 100% is the decision, not
 
 ## Status & guarantees
 
-- **CI-green:** `cargo fmt` + `clippy -D warnings` + `cargo test` (8 tests) + Python
+- **CI-green:** `cargo fmt` + `clippy -D warnings` + `cargo test` (11 tests) + Python
   smoke tests (dial + sealgate end-to-end). See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-- **Real integrity:** SHA-256 is computed in code (Rust `sha2`, Python `hashlib`),
-  verifiable with standard `sha256sum -c`. No fabricated seals.
-- **Honest limits:** signing (ed25519 / two-anchor) and a hash-chained audit log are
-  specced but not yet built — see [`scribe/FORK-01-crypto-fingerprint.md`](scribe/FORK-01-crypto-fingerprint.md)
-  and [`scribe/NOTESTATION-CONCEPT.md`](scribe/NOTESTATION-CONCEPT.md).
+- **Real integrity, in code:** SHA-256 content seal (`--hash`), **ed25519 signing**
+  (`--sign`, `--gen-key`), and a **hash-chained audit log** (`--verify-log`) — all
+  computed in code, verifiable with standard `sha256sum -c`. No fabricated seals.
+- **Attestation tiers:** `fast-fnv` → `verified-sha256` → `signed-ed25519`, recorded
+  in every plan. `scribe --verify` checks the content seal *and* the signature.
+- **Honest limits:** signing is single-key today; the **two-anchor** binding (signer +
+  host) and external-notary anchoring are composed at the gate, not yet in `scribe` —
+  see [`scribe/NOTESTATION-CONCEPT.md`](scribe/NOTESTATION-CONCEPT.md). Trust in a
+  public key still requires pinning it out-of-band.
 
 ## Docs
 
