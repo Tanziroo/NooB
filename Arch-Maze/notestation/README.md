@@ -7,12 +7,16 @@
 
 **Deliberate selection, honest signing, gated sealing.**
 
-> **What we validate:** that a specific artifact was *present, in a specific
-> byte-for-byte state, at a specific time* — as computed by a named mechanism.
-> Built for **low-stakes, trust-but-verify contract verification**: you get
-> independently-checkable evidence, **not a guarantee**. Higher-stakes, money-backed
-> assurance is available through insured third-party partners (see
-> [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md)).
+> **What we are:** the **bundle maker**. We assemble, seal, and attest bundles — that
+> a specific set of objects was *present, in a specific byte-for-byte state, at a
+> specific time*, and (optionally) that all parties complied. Built for **low-stakes,
+> trust-but-verify** contract verification: independently-checkable evidence, **not a
+> guarantee**.
+>
+> **What we are NOT:** we **never hold, move, custody, or have title to money or any
+> asset.** Holding and releasing value is done by **banks and insured third parties**,
+> entirely separate from and downstream of us. Higher-stakes, money-backed assurance
+> and any escrow/payout are theirs — see [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).
 
 Three small tools for high-stakes work where you must decide under uncertainty and
 *prove* what you decided. They share one principle:

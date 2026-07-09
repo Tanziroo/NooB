@@ -142,11 +142,12 @@ selecting which clauses it requires — the gate stays fail-closed.
   `all_parties` seals only when every required party has contributed a valid seal
   (each proving its own axes). Typically an **insured tier** — a partner underwrites
   the "all complied" attestation.
-- **Escrow.** `sealgate` already models "refuse until every required clause passes."
-  Escrow is that gate *holding a release* (funds, keys, an artifact) until
-  `all_parties` / `all_present` collapse — then release. Optionally insured so the
-  release is money-backed. Notestation attests the *condition*; it does not custody
-  the asset — the escrow agent does, on the gate's verdict.
+- **Escrow release-condition (we are NOT the custodian).** Notestation only emits the
+  compliance attestation — "`all_parties` / `all_present` collapsed; release
+  authorized." A **bank or insured custodian** holds the funds/keys/asset and performs
+  any release, *consuming* our attestation as a condition. Notestation never holds,
+  moves, or has title to value, and carries none of that liability. Custody, funds,
+  and payout are theirs; the sealed bundle + attestation are ours.
 
 ## Changelog
 

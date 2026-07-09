@@ -61,6 +61,23 @@ collapses a vectorpoint; the seal is the binary that forces the decision.* The s
 records that decision and the evidence behind it — it does not pretend to be proof
 of truth.
 
+## We are the bundle maker — we never hold value
+
+This boundary is absolute and by design:
+
+- Notestation **assembles, seals, and attests bundles.** That is the entire role.
+- It **never holds, moves, custodies, escrows, or has title to money or any asset,**
+  and it never will. It is not a bank, a payment processor, a custodian, or an escrow
+  agent, and it takes no fees or interest on anything of value.
+- Holding value, moving funds, and releasing an escrow require an **insured third
+  party and/or a bank** — entirely separate from and downstream of us. They may
+  *consume* a Notestation attestation as a release condition, but the custody, the
+  funds, the payout, and the associated liability are **theirs, not ours.**
+- We attest the *condition* ("all parties complied", "all objects present"); we do
+  not perform the settlement.
+
+If a transaction involves value, the value never passes through Notestation.
+
 ## Who carries the liability (two tiers)
 
 The base tool and the insured layer are deliberately separate, so the free product
