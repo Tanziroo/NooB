@@ -15,8 +15,14 @@ Three small tools for high-stakes work where you must decide under uncertainty a
 > the collapse. Compose the layers a contract needs; **refuse to seal until every
 > one is satisfied by a real mechanism.**
 
-Nothing here ever fakes a guarantee it can't deliver (**Label ≤ Mechanism**): a
-model never computes a hash, and a gate never passes a layer it can't verify.
+Nothing here ever fakes a claim it can't back (**Label ≤ Mechanism**): a model never
+computes a hash, and a gate never passes a layer it can't verify.
+
+**These tools produce evidence, not guarantees.** A seal attests that *"this artifact
+was present, in this byte-for-byte state, at this time, by this mechanism"* — and no
+more. It is independently verifiable by third parties with standard tools, and it
+does not claim authenticity, ownership, or truth. See
+[`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).
 
 ---
 
@@ -71,7 +77,7 @@ VERDICT: SEAL PERMITTED  (binary collapse — the only 100% is the decision, not
 
 ---
 
-## Status & guarantees
+## Status & scope of claims
 
 - **CI-green:** `cargo fmt` + `clippy -D warnings` + `cargo test` (11 tests) + Python
   smoke tests (dial + sealgate end-to-end). See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
