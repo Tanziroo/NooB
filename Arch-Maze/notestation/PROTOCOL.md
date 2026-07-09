@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.3`
+`protocol_version: 0.4`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -42,6 +42,7 @@ The unit of a transaction: what was selected, and its seal.
   "scribe_version": "0.6.0",
   "root": "/path",
   "attestation_tier": "fast-fnv | verified-sha256 | signed-ed25519",
+  "event": "requested | arrived | signed | received",   // optional: lifecycle checkpoint
   "selection": { "folders": [], "extensions": [] },
   "summary": { "files": 0, "bytes": 0 },
   "manifest_fingerprint": "<fnv64 hex>",            // always
@@ -127,6 +128,30 @@ of small transactions interoperate and remain independently verifiable.
 
 ---
 
+## Validation events (metered, party-requested)
+
+A validation is a **point-in-time check, requested by either side**, that reports
+whether the declared numbers/objects are true *at that instant*. It is metered: a
+**small per-validation transaction fee** is charged for the act itself — **whether or
+not everything is present.** We are paid to report the truth of the state, never to
+make it pass. That incentive keeps the validator neutral.
+
+Typical lifecycle checkpoints — each an independent validation event, reversible:
+
+| event | asserts |
+|-------|---------|
+| `requested` | the numbers are true at the time of the validation request |
+| `arrived`   | true on arrival at the endpoint |
+| `signed`    | true after signing |
+| `received`  | true on receipt |
+
+Either party may request any event. Each produces a plan record + seal **or a
+discrepancy report** (present vs. declared), and appends to the hash-chained log.
+High volume × small fee is the model — the middle layer collects many small, honest
+validations; it moves and holds nothing.
+
+---
+
 ## Composition patterns
 
 The same surfaces compose into higher-order transactions. Each is just a contract
@@ -158,6 +183,9 @@ selecting which clauses it requires — the gate stays fail-closed.
 
 ## Changelog
 
+- **0.4** — add metered validation events (`requested` / `arrived` / `signed` /
+  `received`), either-party request, small per-validation fee charged regardless of
+  outcome, optional `event` field on the plan record.
 - **0.3** — add the two-point handoff pattern (validate at origin + endpoint,
   reversible); reinforce that Notestation only validates — it does not transport,
   hold, or custody anything.
