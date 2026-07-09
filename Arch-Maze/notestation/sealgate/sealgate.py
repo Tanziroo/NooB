@@ -97,6 +97,7 @@ BUILTINS = {
 KNOWN_LAYERS = {
     "content_hash":   ("content-integrity", "the bytes are unchanged"),
     "merkle_chain":   ("history-integrity", "the log/order was not rewritten"),
+    "signer_trusted": ("key-trust",         "the signer's key is pinned/authorized by the verify layer (you)"),
     "signer_perm":    ("authority",         "who signed, at what permission"),
     "host_in":        ("location",          "which host/desk it came from"),
     "distance":       ("proximity",         "physical/network nearness"),

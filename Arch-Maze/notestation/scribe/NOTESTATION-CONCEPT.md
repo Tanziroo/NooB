@@ -109,3 +109,29 @@ stack collapses 6/9 and seals; drop the device and it collapses 1/9 and refuses.
 merkle chaining → history-integrity · distance layers → proximity · knock/liveness
 → liveness · zk-proof audio/video → media-provenance. The harnesses test that each
 layer actually collapses its axis before a contract is allowed to rely on it.
+
+---
+
+## The verify-layer boundary (keystone)
+
+> "Trusting a public key still requires pinning out of band — because the point is
+> **we are the verify layer.**"
+
+A hard separation, deliberately:
+
+- **scribe SIGNS. It does not judge trust.** `--verify` reports "signature valid for
+  key K" and stops. It never decides that K is *authorized* — a signer that certifies
+  its own key's trust is circular (the fabricated-trust anti-pattern). scribe hands
+  you a fact; it does not manufacture confidence in the identity.
+- **The verify layer OWNS trust.** Which keys are pinned, which signer/host anchors
+  are authorized, what permission the lattice grants — that judgment lives in the
+  operator's attestation device, not in the tool that produced the signature.
+- **The seam is the seal-gate.** Key-trust is a *contract clause*
+  (`signer_trusted` -> axis `key-trust`), satisfied by the verify layer as an external
+  verifier — not something scribe self-asserts. A contract composes both independently:
+  - `content_hash` + `signature valid`  <- scribe proves these (mechanism it holds)
+  - `signer_trusted` (key pinned) + `signer_perm` + `host_in`  <- the verify layer proves these
+
+This is Label <= Mechanism applied to identity: scribe claims only "signed by K"
+(which it can prove); the claim "K is trusted" is made only by the layer that
+actually holds that authority — you.
