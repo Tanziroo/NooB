@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.1`
+`protocol_version: 0.2`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -89,6 +89,8 @@ Each clause collapses one axis of uncertainty. Registry (extensible; additive):
 | clause | axis | collapses |
 |--------|------|-----------|
 | `content_hash` | content-integrity | the bytes are unchanged |
+| `all_present` | completeness | every declared object in the set is present and its seal verifies |
+| `all_parties` | multi-party-compliance | every required party contributed a valid seal (escrow-release condition) |
 | `merkle_chain` | history-integrity | the log/order was not rewritten |
 | `signer_trusted` | key-trust | the signer's key is pinned by the verify layer |
 | `signer_perm` | authority | who signed, at what permission |
@@ -125,10 +127,34 @@ of small transactions interoperate and remain independently verifiable.
 
 ---
 
+## Composition patterns
+
+The same surfaces compose into higher-order transactions. Each is just a contract
+selecting which clauses it requires — the gate stays fail-closed.
+
+- **Presence bundle ("all objects present").** The base trust: the plan record is a
+  manifest of a set; `all_present` collapses *completeness* — every declared object
+  is present with a verifying seal. Default "trust the set is here."
+- **Bundle-at-creation.** Seal at the moment a bundle/package is assembled, so it
+  carries its own manifest + seal from birth. The producer attests presence;
+  downstream parties re-verify independently.
+- **Multi-party compliance ("all parties comply").** A contract requiring
+  `all_parties` seals only when every required party has contributed a valid seal
+  (each proving its own axes). Typically an **insured tier** — a partner underwrites
+  the "all complied" attestation.
+- **Escrow.** `sealgate` already models "refuse until every required clause passes."
+  Escrow is that gate *holding a release* (funds, keys, an artifact) until
+  `all_parties` / `all_present` collapse — then release. Optionally insured so the
+  release is money-backed. Notestation attests the *condition*; it does not custody
+  the asset — the escrow agent does, on the gate's verdict.
+
 ## Changelog
 
+- **0.2** — add `all_present` (completeness) and `all_parties`
+  (multi-party-compliance) clauses; document composition patterns (presence bundle,
+  bundle-at-creation, multi-party compliance, escrow).
 - **0.1** — initial: plan record, canonical record + external seal, hash-chained
-  log, verifier interface, 10-axis taxonomy, sim-result. Tiers fast/verified/signed.
+  log, verifier interface, axis taxonomy, sim-result. Tiers fast/verified/signed.
 
 Scope of what a seal claims (and does not) is in
 [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).

@@ -96,6 +96,8 @@ BUILTINS = {
 # (clause -> (axis it collapses, what "collapsed" means))
 KNOWN_LAYERS = {
     "content_hash":   ("content-integrity", "the bytes are unchanged"),
+    "all_present":    ("completeness",      "every declared object is present and its seal verifies"),
+    "all_parties":    ("multi-party-compliance", "every required party contributed a valid seal (escrow-release)"),
     "merkle_chain":   ("history-integrity", "the log/order was not rewritten"),
     "signer_trusted": ("key-trust",         "the signer's key is pinned/authorized by the verify layer (you)"),
     "signer_perm":    ("authority",         "who signed, at what permission"),
