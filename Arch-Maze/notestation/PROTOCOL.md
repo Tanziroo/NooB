@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.6`
+`protocol_version: 0.7`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -180,6 +180,12 @@ what earns the trust that makes it durable.
   tools (`sha256sum`, any ed25519 verifier); no one needs our software to check a
   seal. Nothing to lock, nothing to distrust — which is exactly why others build on
   it. Trust is earned through neutrality and verifiability, not captivity.
+- **The steady hand.** Our commitment is stability and neutrality. The spec evolves
+  additively and slowly; breaking changes are rare and loudly versioned; and we do
+  not pick winners among the layers above or below. We stay the constant so the
+  other layers — carriers, custodians, insurers, validators, dispute handlers — can
+  find their ground, and we **let the free market decide** who fills each role. A
+  protocol you can build on for years is worth more than one that chases every trend.
 
 ## Composition patterns
 
@@ -212,6 +218,8 @@ selecting which clauses it requires — the gate stays fail-closed.
 
 ## Changelog
 
+- **0.7** — stewardship commitment ("the steady hand"): stability + neutrality,
+  additive/slow evolution, let the free market decide the layers.
 - **0.6** — add openness & governance: open standard, competitors welcome,
   steward keeps it tight (no gatekeeping), no lock-in — the trusted neutral middle.
 - **0.5** — on a false result the validator reports the discrepancy and stops;
