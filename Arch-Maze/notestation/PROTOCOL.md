@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.4`
+`protocol_version: 0.5`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -150,6 +150,15 @@ discrepancy report** (present vs. declared), and appends to the hash-chained log
 High volume × small fee is the model — the middle layer collects many small, honest
 validations; it moves and holds nothing.
 
+**On a false / discrepancy result, we report it and stop.** Resolving it — dispute,
+remediation, re-validation, chargeback, claim — is the **other parties'** job, not
+ours. We surface the fact ("declared X, present Y"); they do the work.
+
+The validator is deliberately **thin**. Every downstream action — transport,
+custody, settlement, dispute resolution, insurance — is a distinct role for another
+party. **Minimal validator, maximal ecosystem:** staying small is what creates the
+jobs around it.
+
 ---
 
 ## Composition patterns
@@ -183,6 +192,9 @@ selecting which clauses it requires — the gate stays fail-closed.
 
 ## Changelog
 
+- **0.5** — on a false result the validator reports the discrepancy and stops;
+  resolution/dispute/remediation is the parties' job. Thin validator, ecosystem of
+  downstream roles.
 - **0.4** — add metered validation events (`requested` / `arrived` / `signed` /
   `received`), either-party request, small per-validation fee charged regardless of
   outcome, optional `event` field on the plan record.

@@ -78,6 +78,10 @@ This boundary is absolute and by design:
 - We also **do not transport, carry, or move the bundle itself.** A carrier does that.
   Our single function is point-in-time **validation** that all things are present and
   ready — nothing is held, moved, or transmitted by us.
+- We **do not resolve, mediate, remediate, or arbitrate discrepancies.** If a
+  validation returns false, we report the discrepancy (declared vs. present) and stop.
+  Handling it — dispute, remediation, re-validation, chargeback, claim — is the
+  responsibility of the parties and their chosen partners, not ours.
 
 If a transaction involves value or transport, neither the value nor the goods ever
 pass through Notestation. We validate the endpoints; others move and hold.
