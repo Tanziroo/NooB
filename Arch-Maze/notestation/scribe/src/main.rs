@@ -51,12 +51,20 @@ use walkdir::WalkDir;
 
 const VERSION: &str = "0.5.0";
 const DEFAULT_AREAS: &[&str] = &[
-    "home", "medical_backups", "backup", "recovered", "forensics", "images",
-    "srv", "opt", "GROK", "mnt2",
+    "home",
+    "medical_backups",
+    "backup",
+    "recovered",
+    "forensics",
+    "images",
+    "srv",
+    "opt",
+    "GROK",
+    "mnt2",
 ];
 
 struct FileRec {
-    rel: String,   // path relative to root, e.g. "home/khet/notes.txt"
+    rel: String, // path relative to root, e.g. "home/khet/notes.txt"
     size: u64,
     ext: String,
     group: String, // folder group key at the configured depth, e.g. "home/khet"
@@ -111,7 +119,11 @@ fn parse_sim(out: &str) -> Option<SimResult> {
     let rows = rows_v
         .iter()
         .map(|r| SimRow {
-            key: r.get("key").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
+            key: r
+                .get("key")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?")
+                .to_string(),
             bytes: u64f(r, "bytes"),
             action: r
                 .get("action")
@@ -121,7 +133,11 @@ fn parse_sim(out: &str) -> Option<SimResult> {
         })
         .collect();
     Some(SimResult {
-        dest: v.get("dest").and_then(|x| x.as_str()).unwrap_or("(dest?)").to_string(),
+        dest: v
+            .get("dest")
+            .and_then(|x| x.as_str())
+            .unwrap_or("(dest?)")
+            .to_string(),
         dest_free: u64f(&v, "dest_free_bytes"),
         fits: v.get("fits").and_then(|x| x.as_bool()).unwrap_or(true),
         eta_seconds: u64f(&v, "eta_seconds"),
@@ -192,7 +208,9 @@ impl App {
             all.iter().collect()
         } else {
             let needle = self.filter.to_lowercase();
-            all.iter().filter(|r| r.key.to_lowercase().contains(&needle)).collect()
+            all.iter()
+                .filter(|r| r.key.to_lowercase().contains(&needle))
+                .collect()
         }
     }
 
@@ -286,19 +304,38 @@ impl App {
         let mut s = String::new();
         s.push_str("{\n");
         s.push_str(&format!("  \"scribe_version\": \"{}\",\n", VERSION));
-        s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&self.cfg.root.to_string_lossy())));
-        s.push_str(&format!("  \"attestation_tier\": \"{}\",\n", if shas.is_some() { "verified-sha256" } else { "fast-fnv" }));
+        s.push_str(&format!(
+            "  \"root\": \"{}\",\n",
+            json_esc(&self.cfg.root.to_string_lossy())
+        ));
+        s.push_str(&format!(
+            "  \"attestation_tier\": \"{}\",\n",
+            if shas.is_some() {
+                "verified-sha256"
+            } else {
+                "fast-fnv"
+            }
+        ));
         s.push_str("  \"selection\": {\n");
         s.push_str(&format!("    \"folders\": [{}],\n", json_arr(&folders)));
         s.push_str(&format!("    \"extensions\": [{}]\n", json_arr(&exts)));
         s.push_str("  },\n");
-        s.push_str(&format!("  \"summary\": {{ \"files\": {}, \"bytes\": {} }},\n", n, bytes));
+        s.push_str(&format!(
+            "  \"summary\": {{ \"files\": {}, \"bytes\": {} }},\n",
+            n, bytes
+        ));
         // L0: deterministic fingerprint of the exact selection (fast tier, always).
-        s.push_str(&format!("  \"manifest_fingerprint\": \"{}\",\n", fingerprint(&files)));
+        s.push_str(&format!(
+            "  \"manifest_fingerprint\": \"{}\",\n",
+            fingerprint(&files)
+        ));
         // Ring A: real content seal (verified tier). Computed in code; verify with
         // `scribe --verify scribe-plan.json <root>` or `sha256sum -c`.
         if let Some(map) = shas {
-            s.push_str(&format!("  \"manifest_sha256\": \"{}\",\n", manifest_root(&files, map)));
+            s.push_str(&format!(
+                "  \"manifest_sha256\": \"{}\",\n",
+                manifest_root(&files, map)
+            ));
         }
         s.push_str("  \"files\": [\n");
         for (i, f) in files.iter().enumerate() {
@@ -306,11 +343,16 @@ impl App {
             match shas.and_then(|m| m.get(&f.rel)) {
                 Some(sha) => s.push_str(&format!(
                     "    {{ \"path\": \"{}\", \"bytes\": {}, \"sha256\": \"{}\" }}{}\n",
-                    json_esc(&f.rel), f.size, sha, comma
+                    json_esc(&f.rel),
+                    f.size,
+                    sha,
+                    comma
                 )),
                 None => s.push_str(&format!(
                     "    {{ \"path\": \"{}\", \"bytes\": {} }}{}\n",
-                    json_esc(&f.rel), f.size, comma
+                    json_esc(&f.rel),
+                    f.size,
+                    comma
                 )),
             }
         }
@@ -402,8 +444,10 @@ impl App {
         let r_sha = match &shas {
             Some(map) => {
                 let mut body = String::new();
-                let mut recs: Vec<(String, u64, String)> =
-                    files.iter().map(|f| (f.rel.clone(), f.size, map[&f.rel].clone())).collect();
+                let mut recs: Vec<(String, u64, String)> = files
+                    .iter()
+                    .map(|f| (f.rel.clone(), f.size, map[&f.rel].clone()))
+                    .collect();
                 recs.sort();
                 for (rel, _sz, sha) in &recs {
                     body.push_str(&format!("{sha}  {rel}\n"));
@@ -412,7 +456,11 @@ impl App {
             }
             None => Ok(()),
         };
-        let tier = if shas.is_some() { "verified-sha256" } else { "fast-fnv" };
+        let tier = if shas.is_some() {
+            "verified-sha256"
+        } else {
+            "fast-fnv"
+        };
         let seal = root_sha.clone().unwrap_or_else(|| fp.clone());
         let r5 = append_session_log(&format!(
             "ts={ts} version={VERSION} tier={tier} root={} files={} bytes={bytes} fp={fp} sha256_root={} folders={} exts={}",
@@ -423,7 +471,13 @@ impl App {
             self.sel_exts.len(),
         ));
 
-        self.status = if r1.is_ok() && r2.is_ok() && r3.is_ok() && r4.is_ok() && r5.is_ok() && r_sha.is_ok() {
+        self.status = if r1.is_ok()
+            && r2.is_ok()
+            && r3.is_ok()
+            && r4.is_ok()
+            && r5.is_ok()
+            && r_sha.is_ok()
+        {
             match &root_sha {
                 Some(root) => format!(
                     "Committed {} files [verified] sha256_root {}… — plan+manifest+journal+sha256 written. Verify: scribe --verify scribe-plan.json {}",
@@ -445,7 +499,8 @@ impl App {
         let prog = match &self.cfg.executor {
             Some(p) => p.clone(),
             None => {
-                self.status = "No --executor set. Run scribe with --executor /path/to/your-mod.".into();
+                self.status =
+                    "No --executor set. Run scribe with --executor /path/to/your-mod.".into();
                 return;
             }
         };
@@ -538,7 +593,14 @@ fn sha256_file(path: &Path) -> io::Result<String> {
 fn manifest_root(files: &[&FileRec], shas: &HashMap<String, String>) -> String {
     let mut lines: Vec<String> = files
         .iter()
-        .map(|f| format!("{}  {}  {}", shas.get(&f.rel).cloned().unwrap_or_default(), f.size, f.rel))
+        .map(|f| {
+            format!(
+                "{}  {}  {}",
+                shas.get(&f.rel).cloned().unwrap_or_default(),
+                f.size,
+                f.rel
+            )
+        })
         .collect();
     lines.sort();
     let mut h = Sha256::new();
@@ -551,7 +613,10 @@ fn manifest_root(files: &[&FileRec], shas: &HashMap<String, String>) -> String {
 
 fn now_epoch() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// L2 anchor: the resumable backup journal. Every selected file starts `pending`;
@@ -561,7 +626,10 @@ fn build_journal(files: &[&FileRec], fp: &str, ts: u64, root: &Path) -> String {
     s.push_str("{\n");
     s.push_str(&format!("  \"scribe_version\": \"{VERSION}\",\n"));
     s.push_str(&format!("  \"created_epoch\": {ts},\n"));
-    s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&root.to_string_lossy())));
+    s.push_str(&format!(
+        "  \"root\": \"{}\",\n",
+        json_esc(&root.to_string_lossy())
+    ));
     s.push_str(&format!("  \"manifest_fingerprint\": \"{fp}\",\n"));
     s.push_str("  \"status\": \"pending\",\n");
     s.push_str("  \"entries\": [\n");
@@ -581,7 +649,10 @@ fn build_journal(files: &[&FileRec], fp: &str, ts: u64, root: &Path) -> String {
 /// L4 anchor: append-only audit. One line per committed plan, never rewritten.
 fn append_session_log(line: &str) -> io::Result<()> {
     use std::fs::OpenOptions;
-    let mut f = OpenOptions::new().create(true).append(true).open("scribe-session.log")?;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("scribe-session.log")?;
     writeln!(f, "{line}")
 }
 
@@ -671,7 +742,7 @@ fn scan(cfg: &Config) -> Vec<FileRec> {
             progress_files += 1;
 
             // Report progress every 500 files.
-            if progress_files % 500 == 0 {
+            if progress_files.is_multiple_of(500) {
                 eprint!(
                     "\r{} scribe: {} files, {}   ",
                     spinner[spin % spinner.len()],
@@ -684,7 +755,11 @@ fn scan(cfg: &Config) -> Vec<FileRec> {
         }
     }
     if progress_files > 0 {
-        eprintln!("\r✓ scribe: {} files, {}        ", progress_files, human(progress_bytes));
+        eprintln!(
+            "\r✓ scribe: {} files, {}        ",
+            progress_files,
+            human(progress_bytes)
+        );
     }
     files
 }
@@ -721,7 +796,11 @@ fn human(bytes: u64) -> String {
 }
 
 fn heat_bar(size: u64, max: u64, width: usize) -> (String, Color) {
-    let ratio = if max == 0 { 0.0 } else { size as f64 / max as f64 };
+    let ratio = if max == 0 {
+        0.0
+    } else {
+        size as f64 / max as f64
+    };
     let mut filled = (ratio * width as f64).round() as usize;
     if size > 0 && filled == 0 {
         filled = 1;
@@ -758,7 +837,10 @@ fn tab(label: &str, active: bool) -> Span<'static> {
     if active {
         Span::styled(
             format!(" {label} "),
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(format!(" {label} "), Style::default().fg(Color::Gray))
@@ -768,12 +850,19 @@ fn tab(label: &str, active: bool) -> Span<'static> {
 fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(6)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(6),
+        ])
         .split(f.area());
 
     // ---- header / tab bar ----
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" scribe {VERSION} "), Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::styled(
+            format!(" scribe {VERSION} "),
+            Style::default().fg(Color::Black).bg(Color::Cyan),
+        ),
         Span::raw("  "),
         tab("Folders", app.view == View::Folders),
         Span::raw(" "),
@@ -797,7 +886,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             let mark = if checked { "[x] " } else { "[ ] " };
             let (bar, color) = heat_bar(r.size, max, 22);
             ListItem::new(Line::from(vec![
-                Span::styled(mark, Style::default().fg(if checked { Color::Green } else { Color::DarkGray })),
+                Span::styled(
+                    mark,
+                    Style::default().fg(if checked {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
                 Span::raw(format!("{:<28}", truncate(&r.key, 28))),
                 Span::raw(format!("{:>9}", human(r.size))),
                 Span::raw(format!("{:>8}  ", r.count)),
@@ -806,7 +902,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         })
         .collect();
     let title = if app.filter.is_empty() {
-        format!(" {} items — Space pick · a all · n none · / filter ", rows.len())
+        format!(
+            " {} items — Space pick · a all · n none · / filter ",
+            rows.len()
+        )
     } else {
         format!(
             " {} items — filter: \"{}{}\"  (Esc clear) ",
@@ -816,7 +915,9 @@ fn ui(f: &mut Frame, app: &mut App) {
         )
     };
     let title_style = if app.filter_mode {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -832,8 +933,15 @@ fn ui(f: &mut Frame, app: &mut App) {
     // ---- footer: gauge + summary + status ----
     let foot = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)])
-        .split(chunks[2].inner(Margin { horizontal: 1, vertical: 1 }));
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(2),
+        ])
+        .split(chunks[2].inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        }));
     f.render_widget(Block::default().borders(Borders::ALL), chunks[2]);
 
     let (sel_bytes, sel_n) = app.selected_summary();
@@ -855,8 +963,15 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     let summary = Paragraph::new(Line::from(vec![
         Span::styled("Selected: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{sel_n} files, {}", human(sel_bytes)), Style::default().fg(Color::Green)),
-        Span::raw(format!("   folders:{}  exts:{}", app.sel_folders.len(), app.sel_exts.len())),
+        Span::styled(
+            format!("{sel_n} files, {}", human(sel_bytes)),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw(format!(
+            "   folders:{}  exts:{}",
+            app.sel_folders.len(),
+            app.sel_exts.len()
+        )),
     ]));
     f.render_widget(summary, foot[1]);
 
@@ -865,9 +980,13 @@ fn ui(f: &mut Frame, app: &mut App) {
     } else {
         "Tab switch · ↑↓ move · Space pick · a/n all/none · / filter · w write · x simulate · q quit".to_string()
     };
-    let status = Paragraph::new(if app.status.is_empty() { help } else { app.status.clone() })
-        .style(Style::default().fg(Color::Gray))
-        .wrap(Wrap { trim: true });
+    let status = Paragraph::new(if app.status.is_empty() {
+        help
+    } else {
+        app.status.clone()
+    })
+    .style(Style::default().fg(Color::Gray))
+    .wrap(Wrap { trim: true });
     f.render_widget(status, foot[2]);
 
     // ---- popup ----
@@ -880,7 +999,12 @@ fn ui(f: &mut Frame, app: &mut App) {
                     .borders(Borders::ALL)
                     .title(" simulation output — Esc to close ")
                     .border_style(Style::default().fg(Color::Magenta));
-                f.render_widget(Paragraph::new(text.clone()).block(block).wrap(Wrap { trim: false }), area);
+                f.render_widget(
+                    Paragraph::new(text.clone())
+                        .block(block)
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
             }
             Popup::Sim(sim) => {
                 let block = Block::default()
@@ -893,8 +1017,17 @@ fn ui(f: &mut Frame, app: &mut App) {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .title(" confirm write — [y] commit   [n] cancel ")
-                    .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-                f.render_widget(Paragraph::new(msg.clone()).block(block).wrap(Wrap { trim: false }), area);
+                    .border_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                f.render_widget(
+                    Paragraph::new(msg.clone())
+                        .block(block)
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
             }
         }
     }
@@ -910,7 +1043,10 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
     lines.push(Line::from(vec![
         Span::styled("dest: ", Style::default().fg(Color::Gray)),
         Span::raw(sim.dest.clone()),
-        Span::styled(format!("  ({} free)", human(sim.dest_free)), Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("  ({} free)", human(sim.dest_free)),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     let conflict_style = if sim.conflicts > 0 {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
@@ -918,13 +1054,22 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
         Style::default().fg(Color::Green)
     };
     lines.push(Line::from(vec![
-        Span::styled(format!("copy {}", human(sim.copy_bytes)), Style::default().fg(Color::Green)),
+        Span::styled(
+            format!("copy {}", human(sim.copy_bytes)),
+            Style::default().fg(Color::Green),
+        ),
         Span::raw(" · "),
-        Span::styled(format!("skip {}", human(sim.skip_bytes)), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("skip {}", human(sim.skip_bytes)),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::raw(" · "),
         Span::styled(format!("{} conflicts", sim.conflicts), conflict_style),
         Span::raw(" · "),
-        Span::styled(format!("ETA {}", fmt_eta(sim.eta_seconds)), Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("ETA {}", fmt_eta(sim.eta_seconds)),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     lines.push(Line::from(""));
 
@@ -938,16 +1083,26 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
             Span::raw("  "),
             Span::styled(
                 format!(" {} ", r.action),
-                Style::default().fg(Color::Black).bg(action_color(&r.action)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(action_color(&r.action))
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("will it fit?", Style::default().fg(Color::Gray))));
+    lines.push(Line::from(Span::styled(
+        "will it fit?",
+        Style::default().fg(Color::Gray),
+    )));
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(lines.len() as u16), Constraint::Length(1), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(lines.len() as u16),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
         .split(inner);
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), layout[0]);
@@ -960,15 +1115,30 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(gcolor))
         .ratio(ratio)
-        .label(format!("{} of {} dest ({:.0}%)", human(after), human(sim.dest_free), ratio * 100.0));
+        .label(format!(
+            "{} of {} dest ({:.0}%)",
+            human(after),
+            human(sim.dest_free),
+            ratio * 100.0
+        ));
     f.render_widget(gauge, layout[1]);
 
     let verdict = if sim.fits {
-        Span::styled(format!("✓ fits · {} conflicts · ETA {}", sim.conflicts, fmt_eta(sim.eta_seconds)),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            format!(
+                "✓ fits · {} conflicts · ETA {}",
+                sim.conflicts,
+                fmt_eta(sim.eta_seconds)
+            ),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        Span::styled("✗ WILL NOT FIT — deselect something",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "✗ WILL NOT FIT — deselect something",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
     };
     f.render_widget(Paragraph::new(Line::from(verdict)), layout[2]);
 }
@@ -1098,7 +1268,9 @@ fn parse_args() -> (Config, bool) {
             "--executor" => executor = it.next(),
             "--depth" => depth = it.next().and_then(|s| s.parse().ok()).unwrap_or(2),
             "--areas" => {
-                areas = it.next().map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                areas = it
+                    .next()
+                    .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
             }
             "-h" | "--help" => {
                 print_help();
@@ -1144,7 +1316,11 @@ fn run_verify(plan_path: &str, root_override: Option<&str>) -> i32 {
     let root = PathBuf::from(
         root_override
             .map(|s| s.to_string())
-            .or_else(|| v.get("root").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .or_else(|| {
+                v.get("root")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| ".".into()),
     );
     let claimed_root = v.get("manifest_sha256").and_then(|x| x.as_str());
@@ -1264,7 +1440,12 @@ mod tests {
     }
 
     fn rec(rel: &str, size: u64) -> FileRec {
-        FileRec { rel: rel.into(), size, ext: "x".into(), group: "g".into() }
+        FileRec {
+            rel: rel.into(),
+            size,
+            ext: "x".into(),
+            group: "g".into(),
+        }
     }
 
     #[test]
@@ -1331,7 +1512,10 @@ fn main() -> io::Result<()> {
     let (cfg, json_mode) = parse_args();
 
     if !cfg.root.is_dir() {
-        eprintln!("scribe: '{}' is not a directory. (try --help)", cfg.root.display());
+        eprintln!(
+            "scribe: '{}' is not a directory. (try --help)",
+            cfg.root.display()
+        );
         std::process::exit(1);
     }
 
@@ -1354,14 +1538,20 @@ fn main() -> io::Result<()> {
         let mut s = String::from("{\n  \"scribe_version\": \"");
         s.push_str(VERSION);
         s.push_str("\",\n");
-        s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&cfg.root.to_string_lossy())));
+        s.push_str(&format!(
+            "  \"root\": \"{}\",\n",
+            json_esc(&cfg.root.to_string_lossy())
+        ));
         s.push_str(&format!("  \"total_bytes\": {total_bytes},\n"));
         s.push_str("  \"folders\": [\n");
         for (i, r) in folders.iter().enumerate() {
             let c = if i + 1 < folders.len() { "," } else { "" };
             s.push_str(&format!(
                 "    {{ \"key\": \"{}\", \"bytes\": {}, \"files\": {} }}{}\n",
-                json_esc(&r.key), r.size, r.count, c
+                json_esc(&r.key),
+                r.size,
+                r.count,
+                c
             ));
         }
         s.push_str("  ],\n  \"extensions\": [\n");
@@ -1369,7 +1559,10 @@ fn main() -> io::Result<()> {
             let c = if i + 1 < exts.len() { "," } else { "" };
             s.push_str(&format!(
                 "    {{ \"key\": \"{}\", \"bytes\": {}, \"files\": {} }}{}\n",
-                json_esc(&r.key), r.size, r.count, c
+                json_esc(&r.key),
+                r.size,
+                r.count,
+                c
             ));
         }
         s.push_str("  ]\n}\n");
