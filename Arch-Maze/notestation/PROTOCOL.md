@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.5`
+`protocol_version: 0.6`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -161,6 +161,26 @@ jobs around it.
 
 ---
 
+## Openness & governance (the trusted neutral middle)
+
+The protocol is an **open, permissionless standard** (MIT). We want others in the
+stack — on purpose. The position is *the trusted neutral middle*, and openness is
+what earns the trust that makes it durable.
+
+- **Multiple implementations are welcome, including competitors.** Conformance is by
+  spec, not permission. A rival that speaks this protocol still grows the shared
+  network; an "usurper" that adopts the spec is a participant, not a threat.
+- **The steward keeps the spec tight and current — it does not gatekeep** who
+  participates. Value comes from neutrality and network, not exclusivity. A referee
+  everyone trusts beats a proprietary one everyone suspects.
+- **We can't and shouldn't do it all.** Transport, custody, settlement, dispute
+  resolution, insurance, and even alternative validators are roles for other parties.
+  Staying thin and open is what lets the ecosystem form — goodwill is the moat.
+- **No lock-in, by design.** Every record is independently verifiable with standard
+  tools (`sha256sum`, any ed25519 verifier); no one needs our software to check a
+  seal. Nothing to lock, nothing to distrust — which is exactly why others build on
+  it. Trust is earned through neutrality and verifiability, not captivity.
+
 ## Composition patterns
 
 The same surfaces compose into higher-order transactions. Each is just a contract
@@ -192,6 +212,8 @@ selecting which clauses it requires — the gate stays fail-closed.
 
 ## Changelog
 
+- **0.6** — add openness & governance: open standard, competitors welcome,
+  steward keeps it tight (no gatekeeping), no lock-in — the trusted neutral middle.
 - **0.5** — on a false result the validator reports the discrepancy and stops;
   resolution/dispute/remediation is the parties' job. Thin validator, ecosystem of
   downstream roles.
