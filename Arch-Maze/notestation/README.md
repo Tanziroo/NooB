@@ -13,10 +13,15 @@
 > trust-but-verify** contract verification: independently-checkable evidence, **not a
 > guarantee**.
 >
-> **What we are NOT:** we **never hold, move, custody, or have title to money or any
-> asset.** Holding and releasing value is done by **banks and insured third parties**,
-> entirely separate from and downstream of us. Higher-stakes, money-backed assurance
-> and any escrow/payout are theirs — see [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).
+> **Our only act:** validate, at a moment in time, that all things are present and
+> ready — typically **twice: once at the origin, once at the endpoint** (either
+> direction). Matching the two proves the same complete bundle arrived intact across a
+> handoff we never touched.
+>
+> **What we are NOT:** we **never hold, move, custody, transport, or have title to**
+> money, an asset, or the bundle itself. **Carriers** transport; **banks and insured
+> third parties** hold and release value — entirely separate from and downstream of
+> us. Any escrow/payout is theirs — see [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md).
 
 Three small tools for high-stakes work where you must decide under uncertainty and
 *prove* what you decided. They share one principle:

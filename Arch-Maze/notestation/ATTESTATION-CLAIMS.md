@@ -75,8 +75,12 @@ This boundary is absolute and by design:
   funds, the payout, and the associated liability are **theirs, not ours.**
 - We attest the *condition* ("all parties complied", "all objects present"); we do
   not perform the settlement.
+- We also **do not transport, carry, or move the bundle itself.** A carrier does that.
+  Our single function is point-in-time **validation** that all things are present and
+  ready — nothing is held, moved, or transmitted by us.
 
-If a transaction involves value, the value never passes through Notestation.
+If a transaction involves value or transport, neither the value nor the goods ever
+pass through Notestation. We validate the endpoints; others move and hold.
 
 ## Who carries the liability (two tiers)
 

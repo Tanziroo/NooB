@@ -1,6 +1,6 @@
 # Notestation Protocol
 
-`protocol_version: 0.2`
+`protocol_version: 0.3`
 
 Notestation is a **middle layer**: the tight, versioned protocol that small
 attestation transactions flow through. It does not own the endpoints — it owns the
@@ -142,6 +142,13 @@ selecting which clauses it requires — the gate stays fail-closed.
   `all_parties` seals only when every required party has contributed a valid seal
   (each proving its own axes). Typically an **insured tier** — a partner underwrites
   the "all complied" attestation.
+- **Two-point handoff (validate at origin and endpoint; reversible).** Validate the
+  bundle at the **start** (`all_present` → seal with `manifest_sha256` / signature) and
+  again at the **endpoint** (recompute → `--verify` the seal matches). A match proves
+  the same complete bundle arrived **intact and unchanged** across a custody transfer
+  — **without Notestation transporting it.** A carrier moves the bundle between the two
+  gates; we only validate at each. Runs either direction (origin→endpoint, or the
+  return leg). This is the whole non-liable act: point-in-time validation, twice.
 - **Escrow release-condition (we are NOT the custodian).** Notestation only emits the
   compliance attestation — "`all_parties` / `all_present` collapsed; release
   authorized." A **bank or insured custodian** holds the funds/keys/asset and performs
@@ -151,6 +158,9 @@ selecting which clauses it requires — the gate stays fail-closed.
 
 ## Changelog
 
+- **0.3** — add the two-point handoff pattern (validate at origin + endpoint,
+  reversible); reinforce that Notestation only validates — it does not transport,
+  hold, or custody anything.
 - **0.2** — add `all_present` (completeness) and `all_parties`
   (multi-party-compliance) clauses; document composition patterns (presence bundle,
   bundle-at-creation, multi-party compliance, escrow).
