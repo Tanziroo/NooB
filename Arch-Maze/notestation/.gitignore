@@ -1,0 +1,17 @@
+# rust
+scribe/target/
+
+# python
+**/__pycache__/
+*.pyc
+
+# tool runtime state (never commit these)
+.dial/
+*.attestation.json
+sealgate-audit.log
+scribe-plan.json
+scribe-selection.txt
+scribe-copy.sh
+scribe-journal.json
+scribe-session.log
+scribe-manifest.sha256

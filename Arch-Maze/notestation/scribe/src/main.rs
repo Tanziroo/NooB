@@ -34,27 +34,39 @@
 //   L3 scale     — live `/` filter narrows the list; a/n act on visible rows
 //   L4 audit     — scribe-session.log: append-only record of every commit
 
-use std::collections::{BTreeMap, HashSet};
-use std::io::{self, Write};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rand::rngs::OsRng;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
+use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-const VERSION: &str = "0.4.0";
+const VERSION: &str = "0.6.0";
 const DEFAULT_AREAS: &[&str] = &[
-    "home", "medical_backups", "backup", "recovered", "forensics", "images",
-    "srv", "opt", "GROK", "mnt2",
+    "home",
+    "medical_backups",
+    "backup",
+    "recovered",
+    "forensics",
+    "images",
+    "srv",
+    "opt",
+    "GROK",
+    "mnt2",
 ];
 
 struct FileRec {
-    rel: String,   // path relative to root, e.g. "home/khet/notes.txt"
+    rel: String, // path relative to root, e.g. "home/khet/notes.txt"
     size: u64,
     ext: String,
     group: String, // folder group key at the configured depth, e.g. "home/khet"
@@ -109,7 +121,11 @@ fn parse_sim(out: &str) -> Option<SimResult> {
     let rows = rows_v
         .iter()
         .map(|r| SimRow {
-            key: r.get("key").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
+            key: r
+                .get("key")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?")
+                .to_string(),
             bytes: u64f(r, "bytes"),
             action: r
                 .get("action")
@@ -119,7 +135,11 @@ fn parse_sim(out: &str) -> Option<SimResult> {
         })
         .collect();
     Some(SimResult {
-        dest: v.get("dest").and_then(|x| x.as_str()).unwrap_or("(dest?)").to_string(),
+        dest: v
+            .get("dest")
+            .and_then(|x| x.as_str())
+            .unwrap_or("(dest?)")
+            .to_string(),
         dest_free: u64f(&v, "dest_free_bytes"),
         fits: v.get("fits").and_then(|x| x.as_bool()).unwrap_or(true),
         eta_seconds: u64f(&v, "eta_seconds"),
@@ -157,6 +177,8 @@ struct Config {
     areas: Vec<String>,
     depth: usize,
     executor: Option<String>,
+    hash: bool, // --hash: content-hash the selection (SHA-256) — "verified" tier
+    sign_key: Option<String>, // --sign KEY: ed25519-sign the manifest — "signed" tier (Ring B)
 }
 
 struct App {
@@ -189,7 +211,9 @@ impl App {
             all.iter().collect()
         } else {
             let needle = self.filter.to_lowercase();
-            all.iter().filter(|r| r.key.to_lowercase().contains(&needle)).collect()
+            all.iter()
+                .filter(|r| r.key.to_lowercase().contains(&needle))
+                .collect()
         }
     }
 
@@ -271,7 +295,12 @@ impl App {
     }
 
     /// The hook contract. Stable, machine-readable. Build your mod against this.
-    fn build_plan_json(&self) -> String {
+    /// `shas` = Some(rel->sha256) in the verified tier (--hash); None in fast tier.
+    fn build_plan_json(
+        &self,
+        shas: Option<&HashMap<String, String>>,
+        sig: Option<(&str, &str)>,
+    ) -> String {
         let files = self.selected_files();
         let (bytes, n) = (files.iter().map(|f| f.size).sum::<u64>(), files.len());
         let mut folders: Vec<&String> = self.sel_folders.iter().collect();
@@ -282,24 +311,63 @@ impl App {
         let mut s = String::new();
         s.push_str("{\n");
         s.push_str(&format!("  \"scribe_version\": \"{}\",\n", VERSION));
-        s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&self.cfg.root.to_string_lossy())));
+        s.push_str(&format!(
+            "  \"root\": \"{}\",\n",
+            json_esc(&self.cfg.root.to_string_lossy())
+        ));
+        let tier = if sig.is_some() {
+            "signed-ed25519"
+        } else if shas.is_some() {
+            "verified-sha256"
+        } else {
+            "fast-fnv"
+        };
+        s.push_str(&format!("  \"attestation_tier\": \"{tier}\",\n"));
         s.push_str("  \"selection\": {\n");
         s.push_str(&format!("    \"folders\": [{}],\n", json_arr(&folders)));
         s.push_str(&format!("    \"extensions\": [{}]\n", json_arr(&exts)));
         s.push_str("  },\n");
-        s.push_str(&format!("  \"summary\": {{ \"files\": {}, \"bytes\": {} }},\n", n, bytes));
-        // L0: deterministic fingerprint of the exact selection. Downstream tools
-        // (and the journal) use it to confirm they're acting on the same set.
-        s.push_str(&format!("  \"manifest_fingerprint\": \"{}\",\n", fingerprint(&files)));
+        s.push_str(&format!(
+            "  \"summary\": {{ \"files\": {}, \"bytes\": {} }},\n",
+            n, bytes
+        ));
+        // L0: deterministic fingerprint of the exact selection (fast tier, always).
+        s.push_str(&format!(
+            "  \"manifest_fingerprint\": \"{}\",\n",
+            fingerprint(&files)
+        ));
+        // Ring A: real content seal (verified tier). Computed in code; verify with
+        // `scribe --verify scribe-plan.json <root>` or `sha256sum -c`.
+        if let Some(map) = shas {
+            s.push_str(&format!(
+                "  \"manifest_sha256\": \"{}\",\n",
+                manifest_root(&files, map)
+            ));
+        }
+        // Ring B: ed25519 signature over manifest_sha256 (signed tier).
+        if let Some((pubkey, signature)) = sig {
+            s.push_str(&format!(
+                "  \"signature\": {{ \"algo\": \"ed25519\", \"pubkey\": \"{pubkey}\", \"sig\": \"{signature}\" }},\n"
+            ));
+        }
         s.push_str("  \"files\": [\n");
         for (i, f) in files.iter().enumerate() {
             let comma = if i + 1 < files.len() { "," } else { "" };
-            s.push_str(&format!(
-                "    {{ \"path\": \"{}\", \"bytes\": {} }}{}\n",
-                json_esc(&f.rel),
-                f.size,
-                comma
-            ));
+            match shas.and_then(|m| m.get(&f.rel)) {
+                Some(sha) => s.push_str(&format!(
+                    "    {{ \"path\": \"{}\", \"bytes\": {}, \"sha256\": \"{}\" }}{}\n",
+                    json_esc(&f.rel),
+                    f.size,
+                    sha,
+                    comma
+                )),
+                None => s.push_str(&format!(
+                    "    {{ \"path\": \"{}\", \"bytes\": {} }}{}\n",
+                    json_esc(&f.rel),
+                    f.size,
+                    comma
+                )),
+            }
         }
         s.push_str("  ]\n}\n");
         s
@@ -351,7 +419,44 @@ impl App {
         let fp = fingerprint(&files);
         let ts = now_epoch();
 
-        let plan = self.build_plan_json();
+        // Ring A: in the verified tier (--hash) scribe SIGNS the selection —
+        // streams SHA-256 of every selected file's bytes (in code, not by a model).
+        let mut shas: Option<HashMap<String, String>> = None;
+        if self.cfg.hash {
+            let mut map = HashMap::new();
+            for f in &files {
+                match sha256_file(&self.cfg.root.join(&f.rel)) {
+                    Ok(s) => {
+                        map.insert(f.rel.clone(), s);
+                    }
+                    Err(e) => {
+                        self.status = format!("hash failed on {}: {e}", f.rel);
+                        return;
+                    }
+                }
+            }
+            shas = Some(map);
+        }
+
+        let root_sha = shas.as_ref().map(|m| manifest_root(&files, m));
+
+        // Ring B: sign the manifest root with the operator's key (--sign implies --hash).
+        let mut sig: Option<(String, String)> = None;
+        if let Some(keypath) = &self.cfg.sign_key {
+            match (&root_sha, load_signing_key(Path::new(keypath))) {
+                (Some(root), Ok(sk)) => sig = Some(sign_message(&sk, root)),
+                (None, _) => {
+                    self.status = "--sign requires --hash (nothing to sign).".into();
+                    return;
+                }
+                (_, Err(e)) => {
+                    self.status = format!("sign key error: {e}");
+                    return;
+                }
+            }
+        }
+        let sig_ref = sig.as_ref().map(|(p, s)| (p.as_str(), s.as_str()));
+        let plan = self.build_plan_json(shas.as_ref(), sig_ref);
         let copy = format!(
             "#!/usr/bin/env bash\n# Generated by scribe {v}. Edit DEST then run.\nset -e\nDEST=\"/mnt/backup/KHETPRIME-rescue\"\nmkdir -p \"$DEST\"\nrsync -aAX --info=progress2 --files-from=scribe-selection.txt \"{root}\" \"$DEST/\"\necho \"Done: copied {n} files to $DEST\"\n",
             v = VERSION,
@@ -364,19 +469,75 @@ impl App {
         let r2 = std::fs::write("scribe-plan.json", &plan);
         let r3 = std::fs::write("scribe-copy.sh", copy);
         let r4 = std::fs::write("scribe-journal.json", journal);
+        // Verified tier also emits a coreutils-compatible manifest so anyone can
+        // check it with `cd <root> && sha256sum -c scribe-manifest.sha256`.
+        let r_sha = match &shas {
+            Some(map) => {
+                let mut body = String::new();
+                let mut recs: Vec<(String, u64, String)> = files
+                    .iter()
+                    .map(|f| (f.rel.clone(), f.size, map[&f.rel].clone()))
+                    .collect();
+                recs.sort();
+                for (rel, _sz, sha) in &recs {
+                    body.push_str(&format!("{sha}  {rel}\n"));
+                }
+                std::fs::write("scribe-manifest.sha256", body)
+            }
+            None => Ok(()),
+        };
+        // Ring B: detached signature file alongside the plan.
+        let r_sig = match &sig {
+            Some((pubkey, signature)) => {
+                std::fs::write("scribe-plan.sig", format!("ed25519 {pubkey} {signature}\n"))
+            }
+            None => Ok(()),
+        };
+        let tier = if sig.is_some() {
+            "signed-ed25519"
+        } else if shas.is_some() {
+            "verified-sha256"
+        } else {
+            "fast-fnv"
+        };
+        let seal = root_sha.clone().unwrap_or_else(|| fp.clone());
+        let signer = sig.as_ref().map(|(p, _)| p.as_str()).unwrap_or("-");
         let r5 = append_session_log(&format!(
-            "ts={ts} version={VERSION} root={} files={} bytes={bytes} fp={fp} folders={} exts={}",
+            "ts={ts} version={VERSION} tier={tier} root={} files={} bytes={bytes} fp={fp} sha256_root={} signer={signer} folders={} exts={}",
             self.cfg.root.display(),
             lines.len(),
+            root_sha.clone().unwrap_or_else(|| "-".into()),
             self.sel_folders.len(),
             self.sel_exts.len(),
         ));
 
-        self.status = if r1.is_ok() && r2.is_ok() && r3.is_ok() && r4.is_ok() && r5.is_ok() {
-            format!(
-                "Committed {} files (fp {fp}): plan+manifest+journal written, session logged. Run: bash scribe-copy.sh",
-                lines.len()
-            )
+        self.status = if r1.is_ok()
+            && r2.is_ok()
+            && r3.is_ok()
+            && r4.is_ok()
+            && r5.is_ok()
+            && r_sha.is_ok()
+            && r_sig.is_ok()
+        {
+            match (&root_sha, &sig) {
+                (Some(root), Some((pk, _))) => format!(
+                    "Committed {} files [signed] sha256_root {}… signer {}… — plan+sig+journal written. Verify: scribe --verify scribe-plan.json {}",
+                    lines.len(),
+                    &root[..root.len().min(12)],
+                    &pk[..pk.len().min(8)],
+                    self.cfg.root.display()
+                ),
+                (Some(root), None) => format!(
+                    "Committed {} files [verified] sha256_root {}… — plan+manifest+journal+sha256 written. Verify: scribe --verify scribe-plan.json {}",
+                    lines.len(),
+                    &root[..root.len().min(12)],
+                    self.cfg.root.display()
+                ),
+                _ => format!(
+                    "Committed {} files [fast] fp {seal}. Run: bash scribe-copy.sh   (add --hash for a real SHA-256 seal)",
+                    lines.len()
+                ),
+            }
         } else {
             "ERROR writing artifacts (permission? disk full?)".into()
         };
@@ -386,7 +547,8 @@ impl App {
         let prog = match &self.cfg.executor {
             Some(p) => p.clone(),
             None => {
-                self.status = "No --executor set. Run scribe with --executor /path/to/your-mod.".into();
+                self.status =
+                    "No --executor set. Run scribe with --executor /path/to/your-mod.".into();
                 return;
             }
         };
@@ -394,7 +556,7 @@ impl App {
             self.status = "Nothing selected to simulate.".into();
             return;
         }
-        let plan = self.build_plan_json();
+        let plan = self.build_plan_json(None, None);
         let out = run_executor(&prog, &plan);
         // Render a structured sim if the mod returned one; else show raw text.
         self.popup = Some(match parse_sim(&out) {
@@ -447,9 +609,123 @@ fn fingerprint(files: &[&FileRec]) -> String {
     format!("{h:016x}")
 }
 
+// ── FORK-01 Ring A: real content hashing (the "verified"/"custody" attestation
+// tier). scribe becomes a genuine signer here — SHA-256 computed in code, not by
+// any model, and verifiable with standard `sha256sum -c`.
+
+fn hex(bytes: impl AsRef<[u8]>) -> String {
+    let mut s = String::with_capacity(bytes.as_ref().len() * 2);
+    for b in bytes.as_ref() {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) {
+        return Err("odd-length hex".into());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
+        .collect()
+}
+
+fn sha256_str(s: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex(h.finalize())
+}
+
+// ── FORK-01 Ring B: ed25519 signing (the "signed" attestation tier). scribe is
+// the SIGNER: it signs the manifest root in code with the operator's key. This is
+// the signer-anchor of the two-anchor model; the host-anchor is composed later by
+// the seal-gate.
+
+fn gen_key(path: &Path) -> io::Result<VerifyingKey> {
+    let sk = SigningKey::generate(&mut OsRng);
+    let vk = sk.verifying_key();
+    std::fs::write(path, hex(sk.to_bytes()))?;
+    std::fs::write(format!("{}.pub", path.display()), hex(vk.to_bytes()))?;
+    Ok(vk)
+}
+
+fn load_signing_key(path: &Path) -> Result<SigningKey, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read key: {e}"))?;
+    let bytes = hex_decode(&text)?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "key must be 32 bytes (64 hex)".to_string())?;
+    Ok(SigningKey::from_bytes(&arr))
+}
+
+/// Sign a message; returns (pubkey_hex, sig_hex).
+fn sign_message(sk: &SigningKey, msg: &str) -> (String, String) {
+    let sig = sk.sign(msg.as_bytes());
+    (hex(sk.verifying_key().to_bytes()), hex(sig.to_bytes()))
+}
+
+/// Verify a signature over `msg` against an embedded pubkey. Returns Ok(()) if the
+/// signature is valid for that key (trust in the key itself must be established
+/// out-of-band by pinning it — this proves the manifest was signed by whoever holds
+/// the private key for `pubkey_hex`).
+fn verify_signature(pubkey_hex: &str, sig_hex: &str, msg: &str) -> Result<(), String> {
+    let pk: [u8; 32] = hex_decode(pubkey_hex)?
+        .try_into()
+        .map_err(|_| "pubkey must be 32 bytes".to_string())?;
+    let sg: [u8; 64] = hex_decode(sig_hex)?
+        .try_into()
+        .map_err(|_| "signature must be 64 bytes".to_string())?;
+    let vk = VerifyingKey::from_bytes(&pk).map_err(|e| e.to_string())?;
+    vk.verify(msg.as_bytes(), &Signature::from_bytes(&sg))
+        .map_err(|e| e.to_string())
+}
+
+/// Streamed SHA-256 of a file's contents (64 KiB buffer — never loads whole file).
+fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut f = File::open(path)?;
+    let mut h = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(hex(h.finalize()))
+}
+
+/// Merkle-style manifest root: SHA-256 over the sorted per-file lines
+/// "<sha>  <size>  <rel>". Order-independent (sorted) and content-sensitive.
+fn manifest_root(files: &[&FileRec], shas: &HashMap<String, String>) -> String {
+    let mut lines: Vec<String> = files
+        .iter()
+        .map(|f| {
+            format!(
+                "{}  {}  {}",
+                shas.get(&f.rel).cloned().unwrap_or_default(),
+                f.size,
+                f.rel
+            )
+        })
+        .collect();
+    lines.sort();
+    let mut h = Sha256::new();
+    for l in &lines {
+        h.update(l.as_bytes());
+        h.update(b"\n");
+    }
+    hex(h.finalize())
+}
+
 fn now_epoch() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// L2 anchor: the resumable backup journal. Every selected file starts `pending`;
@@ -459,7 +735,10 @@ fn build_journal(files: &[&FileRec], fp: &str, ts: u64, root: &Path) -> String {
     s.push_str("{\n");
     s.push_str(&format!("  \"scribe_version\": \"{VERSION}\",\n"));
     s.push_str(&format!("  \"created_epoch\": {ts},\n"));
-    s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&root.to_string_lossy())));
+    s.push_str(&format!(
+        "  \"root\": \"{}\",\n",
+        json_esc(&root.to_string_lossy())
+    ));
     s.push_str(&format!("  \"manifest_fingerprint\": \"{fp}\",\n"));
     s.push_str("  \"status\": \"pending\",\n");
     s.push_str("  \"entries\": [\n");
@@ -476,11 +755,81 @@ fn build_journal(files: &[&FileRec], fp: &str, ts: u64, root: &Path) -> String {
     s
 }
 
-/// L4 anchor: append-only audit. One line per committed plan, never rewritten.
-fn append_session_log(line: &str) -> io::Result<()> {
+const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const SESSION_LOG: &str = "scribe-session.log";
+
+/// The `self` hash of the last log entry (or GENESIS if the log is empty/new).
+fn last_chain_hash() -> String {
+    match std::fs::read_to_string(SESSION_LOG) {
+        Ok(text) => text
+            .lines()
+            .rfind(|l| !l.trim().is_empty())
+            .and_then(|l| l.rsplit_once(" self="))
+            .map(|(_, h)| h.trim().to_string())
+            .unwrap_or_else(|| GENESIS.to_string()),
+        Err(_) => GENESIS.to_string(),
+    }
+}
+
+/// L4 anchor, Ring C: append-only, HASH-CHAINED audit. Each entry carries
+/// `prev=<self of previous entry>` and `self=sha256(entry without self=)`. Editing
+/// or deleting any past line breaks every subsequent `self`/`prev`, so tampering is
+/// detectable with `scribe --verify-log` — no external state needed.
+fn append_session_log(fields: &str) -> io::Result<()> {
     use std::fs::OpenOptions;
-    let mut f = OpenOptions::new().create(true).append(true).open("scribe-session.log")?;
-    writeln!(f, "{line}")
+    let prev = last_chain_hash();
+    let seq = std::fs::read_to_string(SESSION_LOG)
+        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+    let canonical = format!("seq={seq} {fields} prev={prev}");
+    let selfh = sha256_str(&canonical);
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(SESSION_LOG)?;
+    writeln!(f, "{canonical} self={selfh}")
+}
+
+/// `scribe --verify-log [path]` — walk the hash chain, report the first break.
+/// Exit 0 = intact, 1 = broken/unreadable.
+fn run_verify_log(path: &str) -> i32 {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("scribe --verify-log: cannot read {path}: {e}");
+            return 1;
+        }
+    };
+    let mut expected_prev = GENESIS.to_string();
+    let mut n = 0u64;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let (canonical, selfh) = match line.rsplit_once(" self=") {
+            Some(x) => x,
+            None => {
+                println!("BROKEN at line {n}: no self= field");
+                return 1;
+            }
+        };
+        if sha256_str(canonical) != selfh.trim() {
+            println!("BROKEN at seq {n}: entry was edited (self hash mismatch)");
+            return 1;
+        }
+        let prev = canonical
+            .rsplit_once("prev=")
+            .map(|(_, p)| p.trim())
+            .unwrap_or("");
+        if prev != expected_prev {
+            println!("BROKEN at seq {n}: chain link mismatch (a prior entry was altered/removed)");
+            return 1;
+        }
+        expected_prev = selfh.trim().to_string();
+        n += 1;
+    }
+    println!(
+        "intact: {n} chained entries, no breaks. head={}",
+        &expected_prev[..expected_prev.len().min(12)]
+    );
+    0
 }
 
 fn run_executor(prog: &str, plan: &str) -> String {
@@ -569,7 +918,7 @@ fn scan(cfg: &Config) -> Vec<FileRec> {
             progress_files += 1;
 
             // Report progress every 500 files.
-            if progress_files % 500 == 0 {
+            if progress_files.is_multiple_of(500) {
                 eprint!(
                     "\r{} scribe: {} files, {}   ",
                     spinner[spin % spinner.len()],
@@ -582,7 +931,11 @@ fn scan(cfg: &Config) -> Vec<FileRec> {
         }
     }
     if progress_files > 0 {
-        eprintln!("\r✓ scribe: {} files, {}        ", progress_files, human(progress_bytes));
+        eprintln!(
+            "\r✓ scribe: {} files, {}        ",
+            progress_files,
+            human(progress_bytes)
+        );
     }
     files
 }
@@ -619,7 +972,11 @@ fn human(bytes: u64) -> String {
 }
 
 fn heat_bar(size: u64, max: u64, width: usize) -> (String, Color) {
-    let ratio = if max == 0 { 0.0 } else { size as f64 / max as f64 };
+    let ratio = if max == 0 {
+        0.0
+    } else {
+        size as f64 / max as f64
+    };
     let mut filled = (ratio * width as f64).round() as usize;
     if size > 0 && filled == 0 {
         filled = 1;
@@ -656,7 +1013,10 @@ fn tab(label: &str, active: bool) -> Span<'static> {
     if active {
         Span::styled(
             format!(" {label} "),
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(format!(" {label} "), Style::default().fg(Color::Gray))
@@ -666,12 +1026,19 @@ fn tab(label: &str, active: bool) -> Span<'static> {
 fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(6)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(6),
+        ])
         .split(f.area());
 
     // ---- header / tab bar ----
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" scribe {VERSION} "), Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::styled(
+            format!(" scribe {VERSION} "),
+            Style::default().fg(Color::Black).bg(Color::Cyan),
+        ),
         Span::raw("  "),
         tab("Folders", app.view == View::Folders),
         Span::raw(" "),
@@ -695,7 +1062,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             let mark = if checked { "[x] " } else { "[ ] " };
             let (bar, color) = heat_bar(r.size, max, 22);
             ListItem::new(Line::from(vec![
-                Span::styled(mark, Style::default().fg(if checked { Color::Green } else { Color::DarkGray })),
+                Span::styled(
+                    mark,
+                    Style::default().fg(if checked {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
                 Span::raw(format!("{:<28}", truncate(&r.key, 28))),
                 Span::raw(format!("{:>9}", human(r.size))),
                 Span::raw(format!("{:>8}  ", r.count)),
@@ -704,7 +1078,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         })
         .collect();
     let title = if app.filter.is_empty() {
-        format!(" {} items — Space pick · a all · n none · / filter ", rows.len())
+        format!(
+            " {} items — Space pick · a all · n none · / filter ",
+            rows.len()
+        )
     } else {
         format!(
             " {} items — filter: \"{}{}\"  (Esc clear) ",
@@ -714,7 +1091,9 @@ fn ui(f: &mut Frame, app: &mut App) {
         )
     };
     let title_style = if app.filter_mode {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -730,8 +1109,15 @@ fn ui(f: &mut Frame, app: &mut App) {
     // ---- footer: gauge + summary + status ----
     let foot = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)])
-        .split(chunks[2].inner(Margin { horizontal: 1, vertical: 1 }));
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(2),
+        ])
+        .split(chunks[2].inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        }));
     f.render_widget(Block::default().borders(Borders::ALL), chunks[2]);
 
     let (sel_bytes, sel_n) = app.selected_summary();
@@ -753,8 +1139,15 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     let summary = Paragraph::new(Line::from(vec![
         Span::styled("Selected: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{sel_n} files, {}", human(sel_bytes)), Style::default().fg(Color::Green)),
-        Span::raw(format!("   folders:{}  exts:{}", app.sel_folders.len(), app.sel_exts.len())),
+        Span::styled(
+            format!("{sel_n} files, {}", human(sel_bytes)),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw(format!(
+            "   folders:{}  exts:{}",
+            app.sel_folders.len(),
+            app.sel_exts.len()
+        )),
     ]));
     f.render_widget(summary, foot[1]);
 
@@ -763,9 +1156,13 @@ fn ui(f: &mut Frame, app: &mut App) {
     } else {
         "Tab switch · ↑↓ move · Space pick · a/n all/none · / filter · w write · x simulate · q quit".to_string()
     };
-    let status = Paragraph::new(if app.status.is_empty() { help } else { app.status.clone() })
-        .style(Style::default().fg(Color::Gray))
-        .wrap(Wrap { trim: true });
+    let status = Paragraph::new(if app.status.is_empty() {
+        help
+    } else {
+        app.status.clone()
+    })
+    .style(Style::default().fg(Color::Gray))
+    .wrap(Wrap { trim: true });
     f.render_widget(status, foot[2]);
 
     // ---- popup ----
@@ -778,7 +1175,12 @@ fn ui(f: &mut Frame, app: &mut App) {
                     .borders(Borders::ALL)
                     .title(" simulation output — Esc to close ")
                     .border_style(Style::default().fg(Color::Magenta));
-                f.render_widget(Paragraph::new(text.clone()).block(block).wrap(Wrap { trim: false }), area);
+                f.render_widget(
+                    Paragraph::new(text.clone())
+                        .block(block)
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
             }
             Popup::Sim(sim) => {
                 let block = Block::default()
@@ -791,8 +1193,17 @@ fn ui(f: &mut Frame, app: &mut App) {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .title(" confirm write — [y] commit   [n] cancel ")
-                    .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-                f.render_widget(Paragraph::new(msg.clone()).block(block).wrap(Wrap { trim: false }), area);
+                    .border_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                f.render_widget(
+                    Paragraph::new(msg.clone())
+                        .block(block)
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
             }
         }
     }
@@ -808,7 +1219,10 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
     lines.push(Line::from(vec![
         Span::styled("dest: ", Style::default().fg(Color::Gray)),
         Span::raw(sim.dest.clone()),
-        Span::styled(format!("  ({} free)", human(sim.dest_free)), Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("  ({} free)", human(sim.dest_free)),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     let conflict_style = if sim.conflicts > 0 {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
@@ -816,13 +1230,22 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
         Style::default().fg(Color::Green)
     };
     lines.push(Line::from(vec![
-        Span::styled(format!("copy {}", human(sim.copy_bytes)), Style::default().fg(Color::Green)),
+        Span::styled(
+            format!("copy {}", human(sim.copy_bytes)),
+            Style::default().fg(Color::Green),
+        ),
         Span::raw(" · "),
-        Span::styled(format!("skip {}", human(sim.skip_bytes)), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("skip {}", human(sim.skip_bytes)),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::raw(" · "),
         Span::styled(format!("{} conflicts", sim.conflicts), conflict_style),
         Span::raw(" · "),
-        Span::styled(format!("ETA {}", fmt_eta(sim.eta_seconds)), Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("ETA {}", fmt_eta(sim.eta_seconds)),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     lines.push(Line::from(""));
 
@@ -836,16 +1259,26 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
             Span::raw("  "),
             Span::styled(
                 format!(" {} ", r.action),
-                Style::default().fg(Color::Black).bg(action_color(&r.action)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(action_color(&r.action))
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("will it fit?", Style::default().fg(Color::Gray))));
+    lines.push(Line::from(Span::styled(
+        "will it fit?",
+        Style::default().fg(Color::Gray),
+    )));
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(lines.len() as u16), Constraint::Length(1), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(lines.len() as u16),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
         .split(inner);
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), layout[0]);
@@ -858,15 +1291,30 @@ fn render_sim(f: &mut Frame, area: Rect, block: Block, sim: &SimResult) {
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(gcolor))
         .ratio(ratio)
-        .label(format!("{} of {} dest ({:.0}%)", human(after), human(sim.dest_free), ratio * 100.0));
+        .label(format!(
+            "{} of {} dest ({:.0}%)",
+            human(after),
+            human(sim.dest_free),
+            ratio * 100.0
+        ));
     f.render_widget(gauge, layout[1]);
 
     let verdict = if sim.fits {
-        Span::styled(format!("✓ fits · {} conflicts · ETA {}", sim.conflicts, fmt_eta(sim.eta_seconds)),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            format!(
+                "✓ fits · {} conflicts · ETA {}",
+                sim.conflicts,
+                fmt_eta(sim.eta_seconds)
+            ),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        Span::styled("✗ WILL NOT FIT — deselect something",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "✗ WILL NOT FIT — deselect something",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
     };
     f.render_widget(Paragraph::new(Line::from(verdict)), layout[2]);
 }
@@ -986,15 +1434,24 @@ fn parse_args() -> (Config, bool) {
     let mut depth = 2usize;
     let mut executor: Option<String> = None;
     let mut json = false;
+    let mut hash = false;
+    let mut sign_key: Option<String> = None;
 
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
+            "--hash" => hash = true,
+            "--sign" => {
+                sign_key = it.next();
+                hash = true; // signing requires a content hash to sign
+            }
             "--executor" => executor = it.next(),
             "--depth" => depth = it.next().and_then(|s| s.parse().ok()).unwrap_or(2),
             "--areas" => {
-                areas = it.next().map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                areas = it
+                    .next()
+                    .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
             }
             "-h" | "--help" => {
                 print_help();
@@ -1013,8 +1470,116 @@ fn parse_args() -> (Config, bool) {
         areas: areas.unwrap_or_else(|| DEFAULT_AREAS.iter().map(|s| s.to_string()).collect()),
         depth: depth.max(1),
         executor,
+        hash,
+        sign_key,
     };
     (cfg, json)
+}
+
+/// `scribe --verify <plan.json> [root]` — re-hash the tree and confirm every file
+/// still matches the signed manifest. This is the payoff verb: it answers "did the
+/// data arrive intact, unchanged?" with a code-computed SHA-256, not a claim.
+/// Exit 0 = intact; 1 = mismatch/missing; 2 = plan has no SHA-256 seal.
+fn run_verify(plan_path: &str, root_override: Option<&str>) -> i32 {
+    let text = match std::fs::read_to_string(plan_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("scribe --verify: cannot read {plan_path}: {e}");
+            return 1;
+        }
+    };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("scribe --verify: {plan_path} is not valid JSON: {e}");
+            return 1;
+        }
+    };
+    let root = PathBuf::from(
+        root_override
+            .map(|s| s.to_string())
+            .or_else(|| {
+                v.get("root")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| ".".into()),
+    );
+    let claimed_root = v.get("manifest_sha256").and_then(|x| x.as_str());
+    if claimed_root.is_none() {
+        eprintln!("scribe --verify: plan is fast tier (FNV, no content seal). Re-run scribe with --hash to sign it.");
+        return 2;
+    }
+    let files = match v.get("files").and_then(|x| x.as_array()) {
+        Some(a) => a,
+        None => {
+            eprintln!("scribe --verify: plan has no files[]");
+            return 1;
+        }
+    };
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut mismatches = 0u64;
+    let mut checked = 0u64;
+    for f in files {
+        let rel = f.get("path").and_then(|x| x.as_str()).unwrap_or("");
+        let size = f.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+        let want = f.get("sha256").and_then(|x| x.as_str()).unwrap_or("");
+        let full = root.join(rel);
+        match sha256_file(&full) {
+            Ok(got) => {
+                checked += 1;
+                if got != want {
+                    mismatches += 1;
+                    println!("CHANGED  {rel}");
+                }
+                lines.push(format!("{got}  {size}  {rel}"));
+            }
+            Err(e) => {
+                mismatches += 1;
+                println!("MISSING  {rel}  ({e})");
+                lines.push(format!("{want}  {size}  {rel}"));
+            }
+        }
+    }
+    lines.sort();
+    let mut h = Sha256::new();
+    for l in &lines {
+        h.update(l.as_bytes());
+        h.update(b"\n");
+    }
+    let recomputed = hex(h.finalize());
+    let root_ok = Some(recomputed.as_str()) == claimed_root;
+
+    println!(
+        "checked {checked} files · {mismatches} changed/missing · manifest_sha256 {}",
+        if root_ok { "MATCHES" } else { "DIFFERS" }
+    );
+
+    // Ring B: if the plan carries an ed25519 signature, verify it over the root.
+    let mut sig_ok = true;
+    if let Some(sigobj) = v.get("signature") {
+        let pubkey = sigobj.get("pubkey").and_then(|x| x.as_str()).unwrap_or("");
+        let sighex = sigobj.get("sig").and_then(|x| x.as_str()).unwrap_or("");
+        match verify_signature(pubkey, sighex, &recomputed) {
+            Ok(()) => println!(
+                "signature: VALID (ed25519, signer {}…) — trust the key by pinning it out-of-band",
+                &pubkey[..pubkey.len().min(8)]
+            ),
+            Err(e) => {
+                sig_ok = false;
+                println!("signature: INVALID ({e})");
+            }
+        }
+    }
+
+    if mismatches == 0 && root_ok && sig_ok {
+        println!("VERIFIED: the selection is intact and matches the signed manifest.");
+        0
+    } else {
+        println!("FAILED: the tree does not match the signed manifest.");
+        1
+    }
 }
 
 fn print_help() {
@@ -1025,10 +1590,15 @@ fn print_help() {
          --areas       comma list of top folders to scan (default: {areas})\n\
          --depth       folder-grouping depth for the Folders view (default 2)\n\
          --executor    program to pipe scribe-plan.json to on 'x' (your sim mod)\n\
-         --json        print the scan as JSON and exit (no TUI)\n\n\
+         --json        print the scan as JSON and exit (no TUI)\n\
+         --hash        verified tier: SHA-256 every selected file on write\n\
+         --sign KEY    signed tier: ed25519-sign the manifest (implies --hash)\n\
+         --gen-key P   generate an ed25519 keypair at P and P.pub, then exit\n\
+         --verify P R  re-hash tree, confirm it matches signed plan P under root R\n\
+         --verify-log L  walk the hash-chained audit log L, report the first break\n\n\
          In the TUI: '/' filters the list, 'w' asks to confirm then writes\n\
-         scribe-plan.json / -selection.txt / -copy.sh / -journal.json and\n\
-         appends an audit line to scribe-session.log.",
+         scribe-plan.json / -selection.txt / -copy.sh / -journal.json (+ .sig when\n\
+         signed) and appends a hash-chained line to scribe-session.log.",
         areas = DEFAULT_AREAS.join(",")
     );
 }
@@ -1073,7 +1643,12 @@ mod tests {
     }
 
     fn rec(rel: &str, size: u64) -> FileRec {
-        FileRec { rel: rel.into(), size, ext: "x".into(), group: "g".into() }
+        FileRec {
+            rel: rel.into(),
+            size,
+            ext: "x".into(),
+            group: "g".into(),
+        }
     }
 
     #[test]
@@ -1093,13 +1668,127 @@ mod tests {
         let a2 = rec("home/a.txt", 11); // one byte different
         assert_ne!(fingerprint(&[&a, &b]), fingerprint(&[&a2, &b]));
     }
+
+    #[test]
+    fn sha256_empty_file_is_known_constant() {
+        let dir = std::env::temp_dir().join("scribe_sha_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("empty");
+        std::fs::write(&p, b"").unwrap();
+        assert_eq!(
+            sha256_file(&p).unwrap(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn manifest_root_is_order_independent_and_content_sensitive() {
+        let a = rec("home/a.txt", 10);
+        let b = rec("home/b.txt", 20);
+        let mut m = HashMap::new();
+        m.insert("home/a.txt".to_string(), "aa".to_string());
+        m.insert("home/b.txt".to_string(), "bb".to_string());
+        let r1 = manifest_root(&[&a, &b], &m);
+        let r2 = manifest_root(&[&b, &a], &m); // order flipped
+        assert_eq!(r1, r2);
+        let mut m2 = m.clone();
+        m2.insert("home/a.txt".to_string(), "ac".to_string()); // one sha changed
+        assert_ne!(r1, manifest_root(&[&a, &b], &m2));
+    }
+
+    #[test]
+    fn hex_roundtrips() {
+        let b = [0u8, 15, 128, 255];
+        assert_eq!(hex_decode(&hex(b)).unwrap(), b);
+        assert!(hex_decode("abc").is_err()); // odd length
+    }
+
+    #[test]
+    fn ed25519_sign_verify_roundtrip() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let (pk, sig) = sign_message(&sk, "manifest-root-hash");
+        assert!(verify_signature(&pk, &sig, "manifest-root-hash").is_ok());
+        assert!(verify_signature(&pk, &sig, "tampered-root").is_err()); // wrong message
+        let (other_pk, _) = sign_message(&SigningKey::generate(&mut OsRng), "x");
+        assert!(verify_signature(&other_pk, &sig, "manifest-root-hash").is_err());
+        // wrong key
+    }
+
+    #[test]
+    fn hash_chain_detects_tampering() {
+        let dir = std::env::temp_dir().join("scribe_chain_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("log");
+
+        let chain = |seq: u64, fields: &str, prev: &str| -> (String, String) {
+            let canonical = format!("seq={seq} {fields} prev={prev}");
+            let selfh = sha256_str(&canonical);
+            (format!("{canonical} self={selfh}"), selfh)
+        };
+        let (l0, h0) = chain(0, "event=a", GENESIS);
+        let (l1, _h1) = chain(1, "event=b", &h0);
+
+        std::fs::write(&p, format!("{l0}\n{l1}\n")).unwrap();
+        assert_eq!(run_verify_log(p.to_str().unwrap()), 0); // intact
+
+        // Tamper entry 0's fields but keep its old self hash → self mismatch.
+        let tampered0 = l0.replace("event=a", "event=HACKED");
+        std::fs::write(&p, format!("{tampered0}\n{l1}\n")).unwrap();
+        assert_eq!(run_verify_log(p.to_str().unwrap()), 1); // broken
+    }
 }
 
 fn main() -> io::Result<()> {
+    let raw: Vec<String> = std::env::args().collect();
+
+    // --gen-key <path>: generate an ed25519 keypair and exit.
+    if let Some(pos) = raw.iter().position(|a| a == "--gen-key") {
+        let Some(path) = raw.get(pos + 1) else {
+            eprintln!("usage: scribe --gen-key <path>");
+            std::process::exit(2);
+        };
+        match gen_key(Path::new(path)) {
+            Ok(vk) => {
+                println!("wrote private key: {path}");
+                println!(
+                    "wrote public key:  {path}.pub  ({}…)",
+                    &hex(vk.to_bytes())[..8]
+                );
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("scribe --gen-key: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // --verify-log <path>: walk the hash-chained audit log and exit.
+    if let Some(pos) = raw.iter().position(|a| a == "--verify-log") {
+        let path = raw.get(pos + 1).map(|s| s.as_str()).unwrap_or(SESSION_LOG);
+        std::process::exit(run_verify_log(path));
+    }
+
+    // --verify is a standalone, non-TUI mode: scribe --verify <plan.json> [root]
+    if let Some(pos) = raw.iter().position(|a| a == "--verify") {
+        let plan = match raw.get(pos + 1) {
+            Some(p) => p.as_str(),
+            None => {
+                eprintln!("usage: scribe --verify <plan.json> [root]");
+                std::process::exit(2);
+            }
+        };
+        let root = raw.get(pos + 2).map(|s| s.as_str());
+        std::process::exit(run_verify(plan, root));
+    }
+
     let (cfg, json_mode) = parse_args();
 
     if !cfg.root.is_dir() {
-        eprintln!("scribe: '{}' is not a directory. (try --help)", cfg.root.display());
+        eprintln!(
+            "scribe: '{}' is not a directory. (try --help)",
+            cfg.root.display()
+        );
         std::process::exit(1);
     }
 
@@ -1122,14 +1811,20 @@ fn main() -> io::Result<()> {
         let mut s = String::from("{\n  \"scribe_version\": \"");
         s.push_str(VERSION);
         s.push_str("\",\n");
-        s.push_str(&format!("  \"root\": \"{}\",\n", json_esc(&cfg.root.to_string_lossy())));
+        s.push_str(&format!(
+            "  \"root\": \"{}\",\n",
+            json_esc(&cfg.root.to_string_lossy())
+        ));
         s.push_str(&format!("  \"total_bytes\": {total_bytes},\n"));
         s.push_str("  \"folders\": [\n");
         for (i, r) in folders.iter().enumerate() {
             let c = if i + 1 < folders.len() { "," } else { "" };
             s.push_str(&format!(
                 "    {{ \"key\": \"{}\", \"bytes\": {}, \"files\": {} }}{}\n",
-                json_esc(&r.key), r.size, r.count, c
+                json_esc(&r.key),
+                r.size,
+                r.count,
+                c
             ));
         }
         s.push_str("  ],\n  \"extensions\": [\n");
@@ -1137,7 +1832,10 @@ fn main() -> io::Result<()> {
             let c = if i + 1 < exts.len() { "," } else { "" };
             s.push_str(&format!(
                 "    {{ \"key\": \"{}\", \"bytes\": {}, \"files\": {} }}{}\n",
-                json_esc(&r.key), r.size, r.count, c
+                json_esc(&r.key),
+                r.size,
+                r.count,
+                c
             ));
         }
         s.push_str("  ]\n}\n");
