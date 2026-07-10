@@ -115,10 +115,16 @@ VERDICT: SEAL PERMITTED  (binary collapse — the only 100% is the decision, not
 
 ## Docs
 
-Under [`scribe/`](scribe/): the architecture (`SPEC.md`, `LAYERS.md`), the signer/
-attestation ladder (`FORK-01-crypto-fingerprint.md`), the epistemic model
-(`NOTESTATION-CONCEPT.md`), and the prompt-engineering method that produced the
-system (`SKILL-tiered-rigor.md`, `PROMPT-*`, `DOUBLE-BLIND-TEST.md`, `PITCH.md`).
+- **The spec:** [`SPEC.md`](SPEC.md) (canonical) · claims & liability:
+  [`ATTESTATION-CLAIMS.md`](ATTESTATION-CLAIMS.md)
+- **Design (in [`scribe/`](scribe/)):** architecture (`SPEC.md`, `LAYERS.md`,
+  `SPEC-v1-LAYERED.md`), the signer/attestation ladder
+  (`FORK-01-crypto-fingerprint.md`), the epistemic model + verify-layer boundary
+  (`NOTESTATION-CONCEPT.md`).
+- **Strategy & method (in [`docs/`](docs/)):** the market pitch (`PITCH.md`) and the
+  prompt-engineering method that produced the system
+  ([`docs/method/`](docs/method/): grader, megaprompt, ultracode-class prompt,
+  tiered-rigor skill, double-blind test, eval).
 
 ## License
 
